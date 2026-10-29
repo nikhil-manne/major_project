@@ -1,0 +1,33 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-toolbox-to-target
+  namespace: sandbox-${SESSION_ID}
+spec:
+  podSelector:
+    matchLabels:
+      role: target
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              role: toolbox
+  policyTypes:
+    - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-toolbox-egress-to-target
+  namespace: sandbox-${SESSION_ID}
+spec:
+  podSelector:
+    matchLabels:
+      role: toolbox
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              role: target
+  policyTypes:
+    - Egress

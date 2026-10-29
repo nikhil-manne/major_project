@@ -1,0 +1,208 @@
+{
+  "id": "cyberrange",
+  "realm": "cyberrange",
+  "displayName": "Cyber Range Security Platform",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "roles": {
+    "realm": [
+      { "name": "red", "description": "Red Team Offensive Operator" },
+      { "name": "blue", "description": "Blue Team Detection Engineer" },
+      { "name": "soc", "description": "SOC Security Analyst" },
+      { "name": "admin", "description": "Range Platform Administrator" }
+    ]
+  },
+  "clientScopes": [
+    {
+      "name": "cyberrange-claims",
+      "description": "Tenant and role claims for Cyber Range",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "tenant-id-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "tenant_id",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "user-realm-role-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "role",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "false"
+          }
+        },
+        {
+          "name": "cyberrange-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "cyberrange-web",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "defaultDefaultClientScopes": [
+    "role_list",
+    "profile",
+    "email",
+    "cyberrange-claims"
+  ],
+  "clients": [
+    {
+      "clientId": "cyberrange-web",
+      "name": "Cyber Range Web UI",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "redirectUris": [
+        "http://localhost:3000/*",
+        "http://localhost:5173/*",
+        "http://127.0.0.1:3000/*",
+        "http://127.0.0.1:5173/*"
+      ],
+      "webOrigins": ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:5173", "http://127.0.0.1:5173"],
+      "defaultClientScopes": [
+        "web-origins",
+        "role_list",
+        "profile",
+        "roles",
+        "email",
+        "cyberrange-claims"
+      ]
+    },
+    {
+      "clientId": "cyberrange-dev-cli",
+      "name": "Dev CLI Client",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": false,
+      "webOrigins": ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:5173", "http://127.0.0.1:5173"],
+      "defaultClientScopes": [
+        "cyberrange-claims"
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "red1",
+      "enabled": true,
+      "email": "red1@cyberrange.local",
+      "firstName": "Red",
+      "lastName": "Operator",
+      "attributes": {
+        "tenant_id": ["00000000-0000-0000-0000-000000000123"]
+      },
+      "realmRoles": ["red"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dev_only_change_me",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "blue1",
+      "enabled": true,
+      "email": "blue1@cyberrange.local",
+      "firstName": "Blue",
+      "lastName": "Defender",
+      "attributes": {
+        "tenant_id": ["00000000-0000-0000-0000-000000000123"]
+      },
+      "realmRoles": ["blue"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dev_only_change_me",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "soc1",
+      "enabled": true,
+      "email": "soc1@cyberrange.local",
+      "firstName": "SOC",
+      "lastName": "Analyst",
+      "attributes": {
+        "tenant_id": ["00000000-0000-0000-0000-000000000123"]
+      },
+      "realmRoles": ["soc"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dev_only_change_me",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "admin1",
+      "enabled": true,
+      "email": "admin1@cyberrange.local",
+      "firstName": "Platform",
+      "lastName": "Admin",
+      "attributes": {
+        "tenant_id": ["00000000-0000-0000-0000-000000000123"]
+      },
+      "realmRoles": ["admin"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dev_only_change_me",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "other_tenant_user",
+      "enabled": true,
+      "email": "other@external.local",
+      "firstName": "Tenant",
+      "lastName": "Isolator",
+      "attributes": {
+        "tenant_id": ["org-999"]
+      },
+      "realmRoles": ["blue"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dev_only_change_me",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

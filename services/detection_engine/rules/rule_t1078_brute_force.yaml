@@ -1,0 +1,24 @@
+title: SSH Valid Accounts Brute Force Attempt
+id: rule-t1078-005
+status: test
+description: Detects SSH credential spraying and brute force login activity.
+author: Blue Team
+references:
+  - https://attack.mitre.org/techniques/T1078/
+tags:
+  - attack.defense_evasion
+  - attack.t1078
+logsource:
+  category: host
+  product: auth
+detection:
+  selection:
+    action|contains:
+      - "hydra"
+      - "sshpass"
+      - "Failed password"
+      - "login: admin"
+  condition: selection
+falsepositives:
+  - User forgotten passwords
+level: medium

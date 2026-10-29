@@ -1,0 +1,23 @@
+title: Network Service Discovery Reconnaissance
+id: rule-t1046-001
+status: test
+description: Detects active port scanning and service discovery using Nmap probes.
+author: Blue Team
+references:
+  - https://attack.mitre.org/techniques/T1046/
+tags:
+  - attack.discovery
+  - attack.t1046
+logsource:
+  category: network
+  product: suricata
+detection:
+  selection:
+    action|contains:
+      - "nmap"
+      - "open ports"
+      - "Portscan"
+  condition: selection
+falsepositives:
+  - Legitimate network inventory scans
+level: medium

@@ -1,0 +1,25 @@
+title: Unauthorized Shell Spawn and Command Execution
+id: rule-t1059-003
+status: test
+description: Detects reverse shell spawned via bash/sh redirecting stdout to network socket.
+author: Blue Team
+references:
+  - https://attack.mitre.org/techniques/T1059/
+tags:
+  - attack.execution
+  - attack.t1059
+logsource:
+  category: host
+  product: falco
+detection:
+  selection:
+    action|contains:
+      - "/dev/tcp/"
+      - "bash -i"
+      - "nc -e"
+      - "whoami"
+      - "cat /etc/passwd"
+  condition: selection
+falsepositives:
+  - Administrative automated scripts
+level: high

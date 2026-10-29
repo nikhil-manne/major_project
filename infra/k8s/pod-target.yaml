@@ -1,0 +1,82 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: target-app
+  namespace: sandbox-${SESSION_ID}
+  labels:
+    role: target
+    cyberrange.io/session-id: "${SESSION_ID}"
+spec:
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: false
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: target
+      image: "${TARGET_IMAGE}"
+      imagePullPolicy: IfNotPresent
+      securityContext:
+        allowPrivilegeEscalation: false
+      resources:
+        limits:
+          cpu: "1000m"
+          memory: "1Gi"
+        requests:
+          cpu: "200m"
+          memory: "256Mi"
+      volumeMounts:
+        - name: tmp-scratch
+          mountPath: /tmp
+
+    # Falco sidecar placeholder: without host/runtime mounts this is in-pod telemetry, not host-wide monitoring.
+    - name: sensor-falco
+      image: falcosecurity/falco-no-driver:0.37.1
+      securityContext:
+        privileged: false
+        capabilities:
+          add: ["SYS_PTRACE"]
+      resources:
+        limits:
+          cpu: "300m"
+          memory: "256Mi"
+      volumeMounts:
+        - name: sensor-logs
+          mountPath: /var/log/falco
+
+    # Network Capture Sidecar: tcpdump
+    - name: network-tcpdump
+      image: nicolaka/netshoot:v0.13
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/sh", "-c", "exec tcpdump -i any -s 0 -U -w /captures/network.pcap"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+          add: ["NET_ADMIN", "NET_RAW"]
+      volumeMounts:
+        - name: pcap-storage
+          mountPath: /captures
+
+    # Telemetry Forwarder Sidecar: Fluent Bit
+    - name: telemetry-forwarder
+      image: fluent/fluent-bit:3.0
+      resources:
+        limits:
+          cpu: "100m"
+          memory: "128Mi"
+      volumeMounts:
+        - name: sensor-logs
+          mountPath: /var/log/falco
+          readOnly: true
+
+  volumes:
+    - name: tmp-scratch
+      emptyDir:
+        medium: Memory
+        sizeLimit: 128Mi
+    - name: sensor-logs
+      emptyDir: {}
+    - name: pcap-storage
+      emptyDir: {}
+

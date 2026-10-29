@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sandbox-${SESSION_ID}
+  labels:
+    app.kubernetes.io/part-of: cyber-range
+    cyberrange.io/session-id: "${SESSION_ID}"
+    cyberrange.io/tenant-id: "${TENANT_ID}"
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
