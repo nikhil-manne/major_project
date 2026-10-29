@@ -1,169 +1,89 @@
-# Project Plan
+# Implementation Plan
 
-This document explains **what we are building** and **how we are building it**, broken into phases. Each phase produces a working, demoable increment — by the end of every phase, something real runs end-to-end, not just a mockup.
+This plan separates work already evidenced in the supplied local evaluation from work still required. The phases are ordered by dependency; they are not claims that each phase has been completed.
 
-Reference: see `goal.md` for the full vision and `requirements.md` for the tools used below.
+## Phase 0 — Local prototype and security-behaviour baseline
+**Status: Local checks reported as passed.**
 
----
+- FastAPI routes and local simulation profile.
+- Local auth and selected role/tenant boundary checks.
+- Lab policy screening without falsely claiming image builds.
+- Simulated attack and local detection evaluation.
+- SQLite fallback persistence and stored-event replay.
+- Coverage, scoring, and CI responses that disclose simulation limitations.
 
-## What We Are Building (Recap)
+**Evidence:** supplied evaluation artefacts report 36/36 local checks passed. This is a historical report and should be rerun after changes.
 
-A unified platform where Red Team, Blue Team, and SOC share one engine and one data model to **attack, defend, analyze, replay, validate, and report** on the security of a software build — in a pre-release sandbox and later in production — with an AI Copilot assisting all three roles.
+## Phase 1 — Frontend build and local acceptance
+**Status: Pending verification.**
 
-The platform is built as independent microservices that all read/write to **one shared, normalized event schema**, which is what makes replay and validation possible without manual stitching.
+- Perform clean `npm ci` using the committed lockfile.
+- Run `npm run build`.
+- Start backend and frontend together.
+- Test login, role-based page access, API error states, empty states, and session workflows in a browser.
+- Record browser screenshots and build/test logs.
 
----
+**Exit criteria:** production build succeeds; critical UI flows pass; failures are documented rather than hidden.
 
-## How We Are Building It (Phased Approach)
+## Phase 2 — External data services
+**Status: Configuration/code present; live integration unverified.**
 
----
+- Validate PostgreSQL schema and persistence across restarts.
+- Validate Kafka topics, producer/consumer delivery, retry behaviour, and duplicate handling.
+- Validate OpenSearch mappings, indexing, search filters, and tenant boundaries.
+- Validate MinIO archive upload/download and checksum verification.
 
-### Phase 0 — Foundations & Environment Setup
-**Goal:** Get the core infrastructure running locally before any feature code is written.
+**Exit criteria:** integration tests use actual services, persist across restart, and capture evidence for success and failure cases.
 
-- Set up **k3s/minikube** as the Kubernetes environment.
-- Stand up **Kafka**, **PostgreSQL**, and **OpenSearch** as the shared backbone (via Docker Compose for local dev).
-- Set up **Keycloak** with three roles: Red Team, Blue Team, SOC (Admin added later).
-- Design and finalize the **normalized event schema** (the JSON shape every event in the system will follow — attack, detection, network, host, SOC action).
-- Initialize the Git repo structure (one service per folder, as listed in `requirements.md`).
+## Phase 3 — Identity and authorization integration
+**Status: Local JWT behaviour tested; real IdP flow unverified.**
 
-**Deliverable:** Empty but running platform skeleton — login works, infra is up, schema is documented.
+- Configure Keycloak realm, client, issuer, audience, roles, and tenant claims.
+- Verify real signed tokens and key rotation behaviour.
+- Test all roles against all sensitive endpoints, not only the dashboard.
+- Test expired, malformed, wrong-issuer, wrong-audience, and wrong-tenant tokens.
 
----
+**Exit criteria:** automated integration suite proves authentication and authorization at API boundaries.
 
-### Phase 1 — Ingestion Pipeline & Data Plane
-**Goal:** Prove that raw security data can flow into the system and come out normalized.
+## Phase 4 — Secure lab build and Kubernetes execution
+**Status: Not verified live; hardened image builder is outstanding.**
 
-- Build the **ingestion-service**: Kafka consumers that take raw log formats (dummy data first) and convert them into the normalized schema.
-- Wire normalized events into OpenSearch for storage/search.
-- Build a minimal **admin dashboard** page that just shows a live feed of normalized events, to visually confirm the pipeline works.
+- Implement an isolated build service for user-supplied source/Dockerfiles.
+- Produce immutable image references, scan results, provenance, and build logs.
+- Configure a real Kubernetes cluster with default-deny network policies, least-privilege service accounts, pod security controls, resource quotas, secrets controls, and cleanup TTLs.
+- Test successful launch, rejected launch, timeout, cancellation, and cleanup after failure.
 
-**Deliverable:** Dummy security events flow in, get normalized, and are visible in a dashboard.
+**Exit criteria:** a lab can be built and launched safely in a test cluster with auditable provenance and demonstrated isolation.
 
----
+## Phase 5 — Real attack and sensor-to-detection validation
+**Status: Simulation tested; live workflow unverified.**
 
-### Phase 2 — Sandbox Orchestration
-**Goal:** Automatically create and destroy an isolated environment per session.
+- Select a small set of safe, authorized test scenarios.
+- Execute only against isolated disposable targets.
+- Collect actual host/network telemetry.
+- Normalize events and preserve trustworthy session/tenant linkage.
+- Validate detection matches and false-positive/false-negative cases.
+- Count ATT&CK coverage only when live attack evidence is linked to a detection according to the documented policy.
 
-- Build the **orchestrator service**: given a `session_id` and a target Docker image, it creates a Kubernetes namespace, applies NetworkPolicy isolation, deploys the target container.
-- Add image safety checks before deployment: **Trivy** + **Hadolint** scan the uploaded Dockerfile/image first.
-- Add automatic teardown via a TTL-based scheduler.
+**Exit criteria:** each supported scenario has repeatable execution, telemetry, detection, and evidence traceability.
 
-**Deliverable:** Upload a Dockerfile → a real, isolated sandbox spins up and later tears itself down automatically.
+## Phase 6 — Archive, replay, scoring, and CI policy
+**Status: Local behavior tested; production path unverified.**
 
----
+- Verify real terminal/session artifacts and PCAP files with actual packet records.
+- Verify archive round-trip and replay against captured events.
+- Document score inputs, weights, limitations, and reproducibility.
+- Enforce CI outcomes: `PASS`, `FAIL`, or `INCONCLUSIVE`; unknown/unverified evidence must not silently pass.
+- Test policy thresholds and release-blocking behavior.
 
-### Phase 3 — Red Team Access & Attack Engine
-**Goal:** Let a red team user actually attack the sandboxed target, and record every action.
+**Exit criteria:** gate outcomes are explainable, reproducible, and enforce the configured policy.
 
-- Deploy a **red team toolbox pod** (Nmap, Metasploit, sqlmap) per session, exposed via **ttyd** in the browser, scoped to that session's network only.
-- Wrap the terminal with **asciinema** to record every keystroke/output.
-- Build 3–5 **scripted attack scenarios** (YAML definitions mapped to MITRE ATT&CK techniques) that can also be run automatically, not just manually.
-- Every attack action (manual or scripted) emits a structured event into the `raw.attack` Kafka topic.
+## Phase 7 — Copilot, observability, and release hardening
+**Status: Deterministic fallback tested; model/RAG path unverified.**
 
-**Deliverable:** A red team user can log in, get a terminal, attack the sandboxed target, and every action is both visible live and recorded for later replay.
+- Integrate a configured model provider and scoped retrieval only if required.
+- Test prompt-injection resistance and tenant/session retrieval boundaries.
+- Add structured logs, metrics, alerting, backup/restore, dependency pinning, and operational runbooks.
+- Conduct a security review and deployment rehearsal.
 
----
-
-### Phase 4 — Blue Team Detection Engine
-**Goal:** Catch what red team is doing, in real time.
-
-- Deploy **Falco** (host/runtime) and **Suricata** (network) as sidecars in each session's namespace.
-- Build the **detection-engine service**: store Sigma rules in PostgreSQL, compile them with **pySigma** into OpenSearch queries, run them continuously against incoming events.
-- Build the **Blue Team dashboard**: live alert feed, and the ability to write/edit a Sigma rule and see it start catching activity immediately.
-
-**Deliverable:** Blue team can watch red team's attack unfold as live alerts, and test new detection rules against it in real time.
-
----
-
-### Phase 5 — Recording, Archival & Replay
-**Goal:** Make every session fully reproducible after the fact.
-
-- Add **tcpdump** capture alongside the asciinema terminal recording, both tagged with `session_id`.
-- On session teardown, archive terminal `.cast`, network `.pcap`, and the full event timeline to **MinIO**.
-- Build the **replay-engine service**: re-emits a past session's events on a synchronized timeline, and uses **tcpreplay** to re-inject the original traffic.
-- Build a **replay UI**: timeline scrubber showing terminal playback, network activity, and alerts side by side.
-
-**Deliverable:** Any past session can be replayed end-to-end — proving the "record everything, replay anytime" promise from the goal.
-
----
-
-### Phase 6 — Validation Engine (MITRE ATT&CK Coverage)
-**Goal:** Turn attack + detection data into an automatic coverage report.
-
-- Load the **MITRE ATT&CK STIX data** into PostgreSQL as the technique reference table.
-- Build the **validation-engine service**: for each technique, check whether an attack event and a matching detection event both exist within a time window → covered / gap / untested.
-- Render results using the **MITRE ATT&CK Navigator** layer format as a heatmap in the dashboard.
-
-**Deliverable:** A live, auto-generated MITRE coverage heatmap — no manual spreadsheet mapping.
-
----
-
-### Phase 7 — Scoring Engine & SOC Dashboard
-**Goal:** Give leadership and SOC analysts a single number and a working triage view.
-
-- Build the **scoring-engine**: compute the weighted Security Readiness Score (coverage %, detection latency, resolved incidents) per session/build.
-- Build the full **SOC dashboard**: case management, alert triage view, basic threat-hunting query interface over OpenSearch.
-
-**Deliverable:** A readiness score is generated per test session, and SOC has a working analyst workspace.
-
----
-
-### Phase 8 — AI Security Copilot
-**Goal:** Add the assistant layer across all three roles.
-
-- Build the **copilot-service** (FastAPI + RAG over OpenSearch, scoped by role and tenant/session).
-- Feature 1 (Blue Team): explain a selected alert in plain language + suggest a MITRE technique it maps to.
-- Feature 2 (Blue Team): given a detection gap, generate a draft Sigma rule (validated by `pySigma` before shown to the user).
-- Feature 3 (Red Team): given current recon output, suggest a plausible next attack technique.
-- Feature 4 (SOC): summarize a session/incident timeline into a short written report.
-
-**Deliverable:** All three dashboards have a working "Ask Copilot" feature grounded in real session data.
-
----
-
-### Phase 9 — Pre-Release Gate Integration (CI/CD Mode)
-**Goal:** Prove the platform works as an automated security gate, not just a manual range.
-
-- Build a webhook endpoint that a CI pipeline (GitHub Actions) calls with a new build.
-- Wire it to automatically trigger Phase 2's orchestrator → Phase 3's scripted attack scenarios (not manual red team) → Phase 4's detection → Phase 6's scoring.
-- Output a pass/fail **build security report**, demonstrating the "shift-left" pre-release testing mode from `goal.md`.
-
-**Deliverable:** A simulated CI pipeline run that automatically tests a new build's security and produces a report — no human in the loop.
-
----
-
-### Phase 10 — Final Integration, Polish & Demo Prep
-**Goal:** Tie every phase together into one coherent, reviewable system.
-
-- End-to-end run-through: upload build → sandbox → attack → detect → validate → score → replay → copilot explanation — all in one continuous demo.
-- Fix cross-service rough edges, add basic error handling/loading states to dashboards.
-- Prepare the final report: architecture diagrams, MITRE coverage screenshots, readiness score trend, replay demo recording.
-
-**Deliverable:** The complete working platform, ready for final review/demo.
-
----
-
-## Phase Summary Table
-
-| Phase | Focus | Key Deliverable |
-|---|---|---|
-| 0 | Foundations | Infra running, schema defined |
-| 1 | Data plane | Events flow in and normalize |
-| 2 | Sandbox orchestration | Isolated environment per session |
-| 3 | Red team | Attacks executed and recorded |
-| 4 | Blue team | Attacks detected in real time |
-| 5 | Recording & replay | Full sessions replayable |
-| 6 | Validation | Automatic MITRE coverage heatmap |
-| 7 | Scoring & SOC | Readiness score + analyst dashboard |
-| 8 | AI Copilot | Role-aware assistant live in all dashboards |
-| 9 | CI/CD gate | Automated pre-release security testing |
-| 10 | Integration | Full end-to-end demo-ready system |
-
----
-
-## Notes on Sequencing
-- Phases 0–2 are prerequisites for everything else — do not parallelize these.
-- Phases 3 and 4 can be built in parallel by two people once Phase 2 is done, since red team attacking and blue team detecting are logically separate services sharing the same event bus.
-- Phase 8 (AI Copilot) deliberately comes late because it depends on having real attack/detection data in the system to be useful — building it earlier means testing it against dummy data only.
-- Phase 9 (CI/CD gate) is largely a wiring exercise once Phases 2–7 exist — it mainly proves the "automated, no human in the loop" story from `goal.md`.
+**Exit criteria:** production claims are supported by an evidence pack, threat-model review, operational runbooks, and release checklist.
