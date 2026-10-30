@@ -3,6 +3,7 @@ name: cyber-range
 services:
   postgres:
     image: postgres:16
+    container_name: cyberrange-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-cyberrange}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_only_change_me}

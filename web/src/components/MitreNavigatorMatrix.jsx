@@ -51,14 +51,16 @@ export default function MitreNavigatorMatrix({ activeSessionId, onSelectTechniqu
   };
 
   const getStatusColor = (status) => {
-    if (status === 'covered') return '#10b981';
-    if (status === 'gap') return '#ef4444';
-    return '#64748b';
+    if (status === 'covered') return '#10b981';   // green — live attack + linked detection
+    if (status === 'gap') return '#ef4444';        // red — live attack, no detection
+    if (status === 'simulated') return '#f59e0b';  // amber — simulated only, not confirmed on real target
+    return '#64748b';                               // slate — untested
   };
 
   const getStatusBg = (status) => {
     if (status === 'covered') return 'rgba(16, 185, 129, 0.15)';
     if (status === 'gap') return 'rgba(239, 68, 68, 0.15)';
+    if (status === 'simulated') return 'rgba(245, 158, 11, 0.12)';
     return 'rgba(100, 116, 139, 0.1)';
   };
 
@@ -144,6 +146,16 @@ export default function MitreNavigatorMatrix({ activeSessionId, onSelectTechniqu
                 {coverageData.untested_count}
               </div>
             </div>
+            {(coverageData.simulated_count > 0) && (
+              <div className="glass-panel stat-card" style={{ borderColor: 'rgba(245,158,11,0.3)' }}>
+                <div className="stat-title">Simulated Only</div>
+                <div className="stat-value" style={{ color: '#f59e0b' }}
+                  title="Exercises ran in simulation mode — not confirmed against a real target. Excluded from verified coverage.">
+                  {coverageData.simulated_count}
+                </div>
+                <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)', marginTop: '4px' }}>not confirmed on target</div>
+              </div>
+            )}
           </div>
         )}
       </div>

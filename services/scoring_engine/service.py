@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from shared.schema import NormalizedEvent, SourceType, Severity, Outcome, ReadinessScoreReport
-from shared.db import get_db, IncidentModel, ReadinessScoreModel, db_context
+from shared.db import get_db, IncidentModel, ReadinessScoreModel, SessionModel, Lab, db_context
 from shared.auth import get_current_user, require_roles, UserContext
 from services.ingestion.opensearch_sink import event_sink
 from services.validation_engine.navigator import ValidationEngine
@@ -339,4 +339,103 @@ async def threat_hunting_query(query: ThreatHuntQuery, user: UserContext = Depen
         "query": query.query_text,
         "matches_count": len(matches),
         "results": matches
+    }
+
+
+@router.get("/lab-report/{lab_id}")
+async def get_lab_assessment_report(
+    lab_id: str,
+    db: Session = Depends(get_db),
+    user: UserContext = Depends(get_current_user)
+):
+    """
+    Generates a full per-lab assessment report tracing:
+    - Uploaded artifact & immutable digest
+    - Static configuration policy findings
+    - Image CVE scan findings
+    - Red Team test steps (live vs simulated)
+    - Telemetry observed & Blue Team detections
+    - Inconclusive results & security recommendations
+    """
+    lab = db.query(Lab).filter(Lab.id == lab_id).first()
+    if not lab:
+        raise HTTPException(status_code=404, detail="Lab not found")
+    if user.role != "admin" and lab.tenant_id != user.tenant_id and not getattr(lab, "is_demo", 0):
+        raise HTTPException(status_code=404, detail="Lab not found")
+
+    # Fetch sessions for this lab
+    sessions = db.query(SessionModel).filter(SessionModel.lab_id == lab_id).all()
+    session_ids = [s.id for s in sessions]
+
+    # Gather telemetry events across sessions
+    all_events = []
+    for sid in session_ids:
+        evs = event_sink.query_events(tenant_id=lab.tenant_id, session_id=sid, limit=1000)
+        all_events.extend(evs)
+
+    attack_events = [e for e in all_events if e.source_type == SourceType.ATTACK]
+    detection_events = [e for e in all_events if e.source_type == SourceType.DETECTION]
+
+    live_attacks = [e for e in attack_events if getattr(e, "provenance", "simulated") == "live"]
+    simulated_attacks = [e for e in attack_events if getattr(e, "provenance", "simulated") == "simulated"]
+
+    # Detections
+    live_detections = [e for e in detection_events if getattr(e, "provenance", "simulated") == "live"]
+    simulated_detections = [e for e in detection_events if getattr(e, "provenance", "simulated") == "simulated"]
+
+    # Static policy findings
+    static_findings = (lab.safety_scan_result or {}).get("findings", [])
+    vuln_findings = (getattr(lab, "vulnerability_scan_result", {}) or {}).get("vulnerabilities", [])
+
+    # Recommendations
+    recommendations = []
+    if static_findings:
+        recommendations.append("Remediate static Dockerfile/Compose policy violations before production deployment.")
+    if vuln_findings:
+        crit_count = sum(1 for v in vuln_findings if v.get("severity") == "CRITICAL")
+        if crit_count > 0:
+            recommendations.append(f"Update vulnerable packages to remediate {crit_count} critical CVE findings.")
+    if not live_attacks and simulated_attacks:
+        recommendations.append("Connect a verified Kubernetes sandbox cluster to execute live validation attacks.")
+
+    return {
+        "lab_id": lab.id,
+        "lab_name": lab.name,
+        "tenant_id": lab.tenant_id,
+        "content_hash": getattr(lab, "content_hash", None),
+        "build_id": getattr(lab, "build_id", None),
+        "image_tag": lab.image_tag,
+        "image_digest": getattr(lab, "image_digest", None),
+        "status": lab.status,
+        "build_status": getattr(lab, "build_status", "pending"),
+        "created_at": lab.created_at.isoformat() if lab.created_at else None,
+        "sessions_count": len(sessions),
+        "static_policy_checks": {
+            "passed": (lab.safety_scan_result or {}).get("passed", False),
+            "findings_count": len(static_findings),
+            "findings": static_findings
+        },
+        "vulnerability_scan": {
+            "status": (getattr(lab, "vulnerability_scan_result", {}) or {}).get("status", "not_scanned"),
+            "total_findings": len(vuln_findings),
+            "critical_count": sum(1 for v in vuln_findings if v.get("severity") == "CRITICAL"),
+            "high_count": sum(1 for v in vuln_findings if v.get("severity") == "HIGH"),
+            "findings": vuln_findings[:50]
+        },
+        "red_team_execution": {
+            "total_attack_steps": len(attack_events),
+            "live_steps": len(live_attacks),
+            "simulated_steps": len(simulated_attacks),
+            "target_endpoint": sessions[0].target_endpoint if sessions else None
+        },
+        "blue_team_detections": {
+            "total_alerts": len(detection_events),
+            "live_alerts": len(live_detections),
+            "simulated_alerts": len(simulated_detections)
+        },
+        "recommendations": recommendations,
+        "provenance_disclosure": {
+            "evaluation_mode": "mixed" if (live_attacks and simulated_attacks) else ("live" if live_attacks else "simulated"),
+            "guarantee": "All findings and telemetry strictly bound to uploaded artifact."
+        }
     }

@@ -35,6 +35,8 @@ def _authorize_session(session_id: str, user: UserContext, requested_tenant: Opt
         row = db.query(SessionModel).filter_by(id=session_id).first()
         if not row:
             raise HTTPException(status_code=404, detail="Session not found")
+        if user.role != "admin" and row.tenant_id != user.tenant_id:
+            raise HTTPException(status_code=404, detail="Session not found in the authorized tenant")
         if requested_tenant and row.tenant_id != requested_tenant and user.role != "admin":
             raise HTTPException(status_code=403, detail="Session tenant does not match request")
         return row.tenant_id

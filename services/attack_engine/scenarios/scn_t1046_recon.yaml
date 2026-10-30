@@ -3,14 +3,15 @@ name: Network Reconnaissance & Service Discovery
 description: Automated network service enumeration targeting active sandbox ports.
 mitre_tactic: TA0007
 mitre_technique: T1046
+required_services: []
 steps:
   - step: 1
-    action: "nmap -sS -p 22,80,443,445,3306,8080 target-pod"
+    action: "nmap -sS -p 22,80,443,445,3306,8080 {TARGET}"
     tool: "nmap"
     delay_ms: 500
     expected_output: "Port 80/tcp open (http), Port 445/tcp open (microsoft-ds), Port 8080/tcp open (http-proxy)"
   - step: 2
-    action: "nmap -sV --version-intensity 5 -p 80,445 target-pod"
+    action: "nmap -sV --version-intensity 5 -p 80,445 {TARGET}"
     tool: "nmap"
     delay_ms: 700
     expected_output: "Apache 2.4.49, Samba smbd 4.3.11"

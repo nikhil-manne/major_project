@@ -78,10 +78,19 @@ class Lab(Base):
     description = Column(Text, nullable=True)
     dockerfile_content = Column(Text, nullable=True)
     compose_content = Column(Text, nullable=True)
+    content_hash = Column(String(64), nullable=True)
+    build_id = Column(String(64), nullable=True)
     image_tag = Column(Text, nullable=True)
+    image_digest = Column(String(128), nullable=True)
     uploaded_by = Column(String(64), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    status = Column(String(32), default="uploaded")  # uploaded, scanning, built, failed, archived
+    status = Column(String(32), default="uploaded")  # uploaded, validating, policy_blocked, policy_checked, building, built, failed, scanning, scan_failed, scan_inconclusive, ready, archived, demo
+    build_status = Column(String(32), default="pending")  # pending, building, built, failed, unavailable
+    build_logs = Column(Text, nullable=True)
     safety_scan_result = Column(JSON, default=dict)
+    vulnerability_scan_result = Column(JSON, default=dict)
+    ports = Column(JSON, default=list)
+    is_demo = Column(Integer, default=0)
+    state_history = Column(JSON, default=list)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     tenant = relationship("Tenant", back_populates="labs")
@@ -96,8 +105,10 @@ class SessionModel(Base):
     lab_id = Column(String(64), ForeignKey("labs.id", ondelete="SET NULL"), nullable=True)
     build_id = Column(String(64), nullable=True)
     target_image = Column(Text, nullable=False)
+    target_endpoint = Column(Text, nullable=True)
+    execution_mode = Column(String(32), default="simulated")
     namespace = Column(String(128), nullable=False)
-    status = Column(String(32), default="active")  # creating, active, destroyed
+    status = Column(String(32), default="active")  # creating, active, destroyed, failed
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     expires_at = Column(DateTime, nullable=True)
     destroyed_at = Column(DateTime, nullable=True)
@@ -119,6 +130,7 @@ class NormalizedEventModel(Base):
     timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
     source_type = Column(String(32), nullable=False, index=True)
     mitre_technique = Column(String(32), nullable=True, index=True)
+    provenance = Column(String(32), default="simulated", nullable=True)
     event_payload = Column(JSON, nullable=False)
     persisted_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
@@ -201,9 +213,17 @@ class IncidentModel(Base):
 
 def create_db_engine():
     """
-    Creates SQLAlchemy engine targeting PostgreSQL from settings.DATABASE_URL.
-    Falls back to SQLite for local development if PostgreSQL is unreachable.
+    Creates SQLAlchemy engine targeting SQLite or PostgreSQL based on settings.DATABASE_BACKEND.
+    Defaults to SQLite for local development ('cyberrange.db').
+    When set to 'postgres', targets PostgreSQL ('cyberrange-postgres') and falls back to SQLite if unreachable.
     """
+    backend = getattr(settings, "DATABASE_BACKEND", "sqlite").lower()
+    sqlite_url = "sqlite:///./cyberrange.db"
+
+    if backend == "sqlite":
+        logger.info("Using local SQLite database backend (cyberrange.db)")
+        return create_engine(sqlite_url, connect_args={"check_same_thread": False})
+
     db_url = settings.DATABASE_URL
     if db_url.startswith("postgresql://"):
         db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
@@ -223,17 +243,75 @@ def create_db_engine():
         return engine
     except Exception as e:
         logger.warning(f"PostgreSQL connection to {db_url} failed ({e}). Falling back to SQLite for local development.")
-        fallback_url = "sqlite:///./cyberrange.db"
-        return create_engine(fallback_url, connect_args={"check_same_thread": False})
+        return create_engine(sqlite_url, connect_args={"check_same_thread": False})
 
 
 engine = create_db_engine()
+
+# Enable WAL mode for SQLite to eliminate concurrency-induced corruption on Windows
+if engine.dialect.name == "sqlite":
+    from sqlalchemy import event
+
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        try:
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL;")
+            cursor.execute("PRAGMA synchronous=NORMAL;")
+            cursor.close()
+        except Exception:
+            pass
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def init_db():
     """Create tables and idempotently seed the two development tenants and users."""
     Base.metadata.create_all(bind=engine)
+
+    # Automatically add newly introduced columns to existing tables if needed
+    try:
+        with engine.connect() as conn:
+            migration_specs = [
+                ("labs", [
+                    ("content_hash", "TEXT"),
+                    ("build_id", "TEXT"),
+                    ("image_digest", "TEXT"),
+                    ("build_status", "TEXT DEFAULT 'pending'"),
+                    ("build_logs", "TEXT"),
+                    ("vulnerability_scan_result", "TEXT"),
+                    ("ports", "TEXT"),
+                    ("is_demo", "INTEGER DEFAULT 0"),
+                    ("state_history", "TEXT"),
+                ]),
+                ("sessions", [
+                    ("target_endpoint", "TEXT"),
+                    ("execution_mode", "TEXT DEFAULT 'simulated'"),
+                ]),
+                ("normalized_events", [
+                    ("provenance", "TEXT DEFAULT 'simulated'"),
+                ])
+            ]
+            for table, columns in migration_specs:
+                try:
+                    if engine.dialect.name == "sqlite":
+                        res = conn.exec_driver_sql(f"PRAGMA table_info({table})")
+                        existing_cols = {row[1] for row in res.fetchall()}
+                    else:
+                        res = conn.exec_driver_sql(
+                            f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table}'"
+                        )
+                        existing_cols = {row[0] for row in res.fetchall()}
+
+                    for col_name, col_def in columns:
+                        if col_name not in existing_cols:
+                            conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_def}")
+                    conn.commit()
+                except Exception as ex:
+                    logger.debug(f"Schema evolution note for {table}: {ex}")
+    except Exception as e:
+        logger.debug(f"Schema check error: {e}")
+
     tenant_specs = {
         "00000000-0000-0000-0000-000000000123": "Default Enterprise (org-123)",
         "00000000-0000-0000-0000-000000000999": "Secondary Enterprise (org-999)",
@@ -253,6 +331,19 @@ def init_db():
         for user_id, tenant_id, username, role in user_specs:
             if not db.query(User).filter_by(id=user_id).first():
                 db.add(User(id=user_id, tenant_id=tenant_id, username=username, role=role))
+        db.commit()
+
+        # Seed default dev credentials (admin123) for built-in users if not present
+        from shared.auth_routes import _hash_password
+        default_hash = _hash_password("admin123")
+        for user_id, _, _, _ in user_specs:
+            if not db.query(AuthCredential).filter_by(user_id=user_id).first():
+                db.add(AuthCredential(
+                    user_id=user_id,
+                    password_hash=default_hash,
+                    is_active=1,
+                    password_updated_at=datetime.now(timezone.utc)
+                ))
         db.commit()
 
 

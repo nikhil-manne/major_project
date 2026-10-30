@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from shared.schema import NormalizedEvent, SourceType, Severity, Outcome
-from shared.db import get_db, SigmaRuleModel, db_context
+from shared.db import get_db, SigmaRuleModel, Lab, SessionModel, db_context
 from shared.auth import get_current_user, require_roles, UserContext
 from shared.kafka_client import KafkaConsumerBase, kafka_producer
 from shared.config import settings
@@ -300,12 +300,14 @@ async def evaluate_detection_rules(req: EvaluateRequest, user: UserContext = Dep
                     mitre_technique=rule.mitre_technique or event.mitre_technique,
                     severity=sev_map.get(rule.level, Severity.HIGH),
                     outcome=Outcome.DETECTED,
+                    provenance=getattr(event, "provenance", "simulated"),
                     replay=event.replay,
                     raw_payload={
                         "rule_id": rule.id,
                         "rule_title": rule.title,
                         "triggering_event_id": event.event_id,
-                        "matched_action": event.action
+                        "matched_action": event.action,
+                        "provenance": getattr(event, "provenance", "simulated")
                     }
                 )
                 await event_sink.index_event(det_event)
@@ -318,6 +320,111 @@ async def evaluate_detection_rules(req: EvaluateRequest, user: UserContext = Dep
         "events_evaluated": len(events),
         "detections_fired": len(detections_generated),
         "detections": detections_generated
+    }
+
+
+@router.get("/vulnerabilities")
+async def get_vulnerability_queue(
+    tenant_id: Optional[str] = None,
+    lab_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: UserContext = Depends(get_current_user),
+):
+    """
+    Exposes static configuration and container image vulnerability findings
+    as a dedicated Blue Team vulnerability queue with source evidence and image digests.
+    """
+    eff_tenant = tenant_id or user.tenant_id
+    if eff_tenant != user.tenant_id and user.role != "admin":
+        raise HTTPException(status_code=403, detail="Cannot query vulnerabilities for another tenant")
+
+    query = db.query(Lab).filter(Lab.status != "archived")
+    if user.role != "admin":
+        query = query.filter((Lab.tenant_id == eff_tenant) | (Lab.is_demo == 1))
+    if lab_id:
+        query = query.filter(Lab.id == lab_id)
+
+    labs = query.all()
+    queue = []
+    for lab in labs:
+        # 1. Image vulnerability findings
+        vuln_data = getattr(lab, "vulnerability_scan_result", {}) or {}
+        vulns = vuln_data.get("vulnerabilities", [])
+        for v in vulns:
+            queue.append({
+                "type": "image_cve",
+                "lab_id": lab.id,
+                "lab_name": lab.name,
+                "target_image": lab.image_tag or lab.image_digest or "unknown",
+                "image_digest": lab.image_digest,
+                "cve_id": v.get("cve_id", "CVE-UNKNOWN"),
+                "package": v.get("package", "unknown"),
+                "installed_version": v.get("installed_version", ""),
+                "fixed_version": v.get("fixed_version", "N/A"),
+                "severity": v.get("severity", "MEDIUM"),
+                "title": v.get("title", ""),
+                "evidence_source": v.get("evidence_source", "trivy_cli"),
+                "scanned_at": vuln_data.get("scanned_at")
+            })
+
+        # 2. Static configuration findings
+        safety = lab.safety_scan_result or {}
+        findings = safety.get("findings", [])
+        for f in findings:
+            queue.append({
+                "type": "configuration_policy",
+                "lab_id": lab.id,
+                "lab_name": lab.name,
+                "target_image": lab.image_tag or "Dockerfile/Compose",
+                "image_digest": lab.image_digest,
+                "cve_id": f.get("rule", "POLICY"),
+                "package": f.get("service") or "config",
+                "installed_version": f"Line {f.get('line', 1)}",
+                "fixed_version": "N/A",
+                "severity": f.get("severity", "MEDIUM"),
+                "title": f.get("message", ""),
+                "evidence_source": safety.get("engine", "policy_scanner"),
+                "scanned_at": lab.created_at.isoformat() if lab.created_at else None
+            })
+    return queue
+
+
+@router.get("/sensor-health")
+async def get_sensor_health(user: UserContext = Depends(get_current_user)):
+    """Reports status of telemetry collectors, event pipeline, and sensor sidecars."""
+    from services.orchestrator.k8s_client import k8s_client
+    from shared.kafka_client import kafka_producer
+    return {
+        "status": "operational",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "sensors": {
+            "kafka_event_backbone": {
+                "connected": getattr(kafka_producer, "_connected", False),
+                "broker": settings.KAFKA_BOOTSTRAP_SERVERS,
+                "mode": "live" if getattr(kafka_producer, "_connected", False) else "fallback_sink"
+            },
+            "opensearch_sink": {
+                "connected": event_sink.is_opensearch_live,
+                "host": settings.OPENSEARCH_HOST,
+                "mode": "opensearch" if event_sink.is_opensearch_live else "relational_fallback"
+            },
+            "kubernetes_cluster": {
+                "connected": k8s_client.is_connected,
+                "mode": "live" if k8s_client.is_connected else "simulated"
+            },
+            "falco_runtime_sensor": {
+                "enabled": k8s_client.is_connected,
+                "status": "active" if k8s_client.is_connected else "simulated"
+            },
+            "suricata_network_sensor": {
+                "enabled": k8s_client.is_connected,
+                "status": "active" if k8s_client.is_connected else "simulated"
+            },
+            "tcpdump_pcap_sensor": {
+                "enabled": k8s_client.is_connected,
+                "status": "active" if k8s_client.is_connected else "simulated"
+            }
+        }
     }
 
 

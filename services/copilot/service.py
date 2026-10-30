@@ -4,6 +4,7 @@ Provides role-tailored AI assistance: alert explanation, Sigma generation, attac
 """
 from datetime import datetime, timezone
 import json
+import logging
 import os
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Depends
@@ -17,6 +18,8 @@ from services.detection_engine.sigma_compiler import SigmaEngine
 from .prompts import SYSTEM_PROMPTS
 from shared.auth import get_current_user, require_roles, UserContext
 from shared.db import db_context, SessionModel
+
+logger = logging.getLogger("cyberrange.copilot")
 
 router = APIRouter(prefix="/api/v1/copilot", tags=["AI Security Copilot"])
 
@@ -80,34 +83,84 @@ class SummarizeSessionRequest(BaseModel):
 class CopilotEngine:
     @staticmethod
     async def query_llm(system_prompt: str, user_prompt: str) -> tuple[str, str]:
-        """Call the configured Anthropic API or use a clearly labelled deterministic demo fallback."""
-        api_key = settings.ANTHROPIC_API_KEY
-        if api_key and api_key != "dev_placeholder_or_local_mock" and not api_key.startswith("dev_"):
-            try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    res = await client.post(
-                        "https://api.anthropic.com/v1/messages",
-                        headers={
-                            "x-api-key": api_key,
-                            "anthropic-version": settings.ANTHROPIC_API_VERSION,
-                            "content-type": "application/json"
+        """
+        Calls Google Gemini API (or Anthropic if selected), falling back cleanly
+        to local deterministic demo responses when offline or without an active API key.
+        """
+        provider = getattr(settings, "LLM_PROVIDER", "gemini").strip().lower()
+
+        # 1. Google Gemini Provider (Default)
+        if provider in {"gemini", "google", "google_gemini"}:
+            api_key = getattr(settings, "GEMINI_API_KEY", "").strip()
+            model = getattr(settings, "GEMINI_MODEL", "gemini-2.0-flash").strip()
+            if api_key and api_key != "dev_placeholder_or_local_mock" and not api_key.startswith("dev_"):
+                try:
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+                    headers = {
+                        "x-goog-api-key": api_key,
+                        "content-type": "application/json"
+                    }
+                    payload = {
+                        "system_instruction": {
+                            "parts": [{"text": system_prompt}]
                         },
-                        json={
-                            "model": settings.ANTHROPIC_MODEL,
-                            "max_tokens": 1024,
-                            "system": system_prompt,
-                            "messages": [{"role": "user", "content": user_prompt}]
+                        "contents": [
+                            {
+                                "role": "user",
+                                "parts": [{"text": user_prompt}]
+                            }
+                        ],
+                        "generationConfig": {
+                            "temperature": 0.2,
+                            "maxOutputTokens": 2048
                         }
-                    )
-                    if res.status_code == 200:
-                        data = res.json()
-                        content = data.get("content", [])
-                        text_blocks = [block.get("text", "") for block in content if block.get("type") == "text"]
-                        if text_blocks:
-                            return "\n".join(text_blocks), "anthropic_api"
-                    logger.warning("Anthropic Copilot request failed (HTTP %s); using local demo fallback", res.status_code)
-            except Exception as exc:
-                logger.warning("Anthropic Copilot request failed; using local demo fallback: %s", exc)
+                    }
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        res = await client.post(url, headers=headers, json=payload)
+                        if res.status_code == 200:
+                            data = res.json()
+                            candidates = data.get("candidates", [])
+                            if candidates:
+                                parts = candidates[0].get("content", {}).get("parts", [])
+                                text = "".join(part.get("text", "") for part in parts if "text" in part)
+                                if text:
+                                    return text, f"gemini_api:{model}"
+                        logger.warning(
+                            "Google Gemini Copilot request failed (HTTP %s: %s); using local demo fallback",
+                            res.status_code, res.text[:200]
+                        )
+                except Exception as exc:
+                    logger.warning("Google Gemini Copilot request error: %s; using local demo fallback", exc)
+
+        # 2. Anthropic Provider (Supported if LLM_PROVIDER=anthropic)
+        elif provider == "anthropic":
+            api_key = getattr(settings, "ANTHROPIC_API_KEY", "").strip()
+            if api_key and api_key != "dev_placeholder_or_local_mock" and not api_key.startswith("dev_"):
+                try:
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        res = await client.post(
+                            "https://api.anthropic.com/v1/messages",
+                            headers={
+                                "x-api-key": api_key,
+                                "anthropic-version": settings.ANTHROPIC_API_VERSION,
+                                "content-type": "application/json"
+                            },
+                            json={
+                                "model": settings.ANTHROPIC_MODEL,
+                                "max_tokens": 1024,
+                                "system": system_prompt,
+                                "messages": [{"role": "user", "content": user_prompt}]
+                            }
+                        )
+                        if res.status_code == 200:
+                            data = res.json()
+                            content = data.get("content", [])
+                            text_blocks = [block.get("text", "") for block in content if block.get("type") == "text"]
+                            if text_blocks:
+                                return "\n".join(text_blocks), f"anthropic_api:{settings.ANTHROPIC_MODEL}"
+                        logger.warning("Anthropic Copilot request failed (HTTP %s); using local demo fallback", res.status_code)
+                except Exception as exc:
+                    logger.warning("Anthropic Copilot request failed: %s; using local demo fallback", exc)
 
         return CopilotEngine._local_security_reasoning(system_prompt, user_prompt), "local_deterministic_demo_fallback"
 

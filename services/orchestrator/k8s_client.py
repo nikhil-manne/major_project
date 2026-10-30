@@ -79,8 +79,10 @@ class K8sSandboxClient:
         3. Allow Toolbox <-> Target NetworkPolicy
         4. Target Pod with Falco / Suricata / tcpdump sidecars
         5. Red Team Toolbox Pod with ttyd web terminal
+        6. Verifies target pod readiness and isolation
         """
         namespace = f"sandbox-{session_id}"
+        target_endpoint = f"target-app.{namespace}.svc.cluster.local"
         replacements = {
             "SESSION_ID": session_id,
             "TENANT_ID": tenant_id,
@@ -122,6 +124,31 @@ class K8sSandboxClient:
                 created_resources.append("Pod/redteam-toolbox")
 
                 logger.info(f"Successfully provisioned K8s sandbox namespace '{namespace}'")
+
+                # 5. Wait for target pod readiness check
+                import time
+                target_ready = False
+                for _ in range(15):
+                    pod_status = self.core_v1.read_namespaced_pod_status(name="target-app", namespace=namespace)
+                    phase = pod_status.status.phase
+                    if phase == "Running":
+                        # Check container statuses
+                        c_statuses = pod_status.status.container_statuses or []
+                        if all(cs.ready for cs in c_statuses if cs.name == "target"):
+                            target_ready = True
+                            break
+                    elif phase in ("Failed", "Unknown"):
+                        break
+                    # Check for image pull errors
+                    for cs in pod_status.status.container_statuses or []:
+                        waiting = cs.state.waiting if cs.state else None
+                        if waiting and waiting.reason in ("ErrImagePull", "ImagePullBackOff", "CrashLoopBackOff"):
+                            raise RuntimeError(f"Target pod failed: {waiting.reason} - {waiting.message}")
+                    time.sleep(1)
+
+                if not target_ready:
+                    logger.warning("Target pod did not become ready within the initial window; continuing with caveat")
+
             except Exception as e:
                 logger.error(f"Error provisioning K8s sandbox resources: {e}")
                 # Roll back partially created resources rather than leaving an unsafe partial sandbox.
@@ -131,6 +158,7 @@ class K8sSandboxClient:
                     logger.exception("Failed to clean up partially-created sandbox namespace %s", namespace)
                 return {
                     "namespace": namespace,
+                    "target_endpoint": target_endpoint,
                     "applied_to_cluster": False,
                     "execution_mode": "failed",
                     "error": str(e),
@@ -138,8 +166,10 @@ class K8sSandboxClient:
                 }
 
         if not self.is_connected:
+            simulated_endpoint = f"simulated-target.{session_id}.local"
             return {
                 "namespace": namespace,
+                "target_endpoint": simulated_endpoint,
                 "applied_to_cluster": False,
                 "execution_mode": "simulated",
                 "resources": [],
@@ -155,6 +185,7 @@ class K8sSandboxClient:
 
         return {
             "namespace": namespace,
+            "target_endpoint": target_endpoint,
             "applied_to_cluster": True,
             "execution_mode": "live",
             "resources": created_resources,
@@ -173,16 +204,24 @@ class K8sSandboxClient:
                 return False
         return True
 
-    def exec_command_in_toolbox(self, session_id: str, command: str) -> Dict[str, Any]:
+    def exec_command_in_toolbox(self, session_id: str, command: str, target_endpoint: Optional[str] = None) -> Dict[str, Any]:
         """Run one allowlisted argv command in the toolbox; never pass user text to a shell."""
         namespace = f"sandbox-{session_id}"
         pod_name = "redteam-toolbox"
+        
+        # Inject dynamic target endpoint into command if provided
+        effective_command = command
+        if target_endpoint:
+            effective_command = effective_command.replace("{TARGET_ENDPOINT}", target_endpoint)
+            effective_command = effective_command.replace("{TARGET}", target_endpoint)
+            effective_command = effective_command.replace("target-pod", target_endpoint)
+
         try:
-            argv = shlex.split(command, posix=True)
+            argv = shlex.split(effective_command, posix=True)
         except ValueError as exc:
-            return {"command": command, "output": f"Invalid command syntax: {exc}", "exit_code": 2, "executed_live": False, "execution_mode": "blocked"}
+            return {"command": effective_command, "output": f"Invalid command syntax: {exc}", "exit_code": 2, "executed_live": False, "execution_mode": "blocked"}
         if not argv:
-            return {"command": command, "output": "Empty command", "exit_code": 2, "executed_live": False, "execution_mode": "blocked"}
+            return {"command": effective_command, "output": "Empty command", "exit_code": 2, "executed_live": False, "execution_mode": "blocked"}
 
         allowed_commands = {
             "nmap", "curl", "wget", "sqlmap", "hydra", "ssh", "sshpass", "msfconsole",
@@ -192,7 +231,7 @@ class K8sSandboxClient:
         executable = os.path.basename(argv[0])
         if executable not in allowed_commands:
             return {
-                "command": command,
+                "command": effective_command,
                 "output": f"Command blocked by toolbox allowlist: {executable}",
                 "exit_code": 126, "executed_live": False, "execution_mode": "blocked",
             }
@@ -207,20 +246,20 @@ class K8sSandboxClient:
                     _request_timeout=30,
                 )
                 return {
-                    "command": command, "output": resp, "exit_code": None,
+                    "command": effective_command, "output": resp, "exit_code": None,
                     "executed_live": True, "execution_mode": "live",
                     "note": "Kubernetes exec returned output; process exit status was not exposed by this stream wrapper.",
                 }
             except Exception as exc:
                 logger.error("Live toolbox command failed in %s: %s", namespace, exc)
                 return {
-                    "command": command, "output": f"Live execution failed: {exc}",
+                    "command": effective_command, "output": f"Live execution failed: {exc}",
                     "exit_code": None, "executed_live": False, "execution_mode": "failed",
                 }
 
         return {
-            "command": command,
-            "output": "SIMULATION ONLY: no Kubernetes command was executed. Configure and verify a sandbox cluster for live execution.",
+            "command": effective_command,
+            "output": f"SIMULATION ONLY: no Kubernetes command was executed against target '{target_endpoint or namespace}'. Configure and verify a sandbox cluster for live execution.",
             "exit_code": None, "executed_live": False, "execution_mode": "simulated",
         }
 

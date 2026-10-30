@@ -22,6 +22,17 @@ export default function RedTeamConsole({ activeSessionId, events, onRefreshEvent
       .catch(() => {});
   }, []);
 
+  const [activeSessionInfo, setActiveSessionInfo] = React.useState(null);
+
+  // Fetch session details (including target_endpoint) whenever the active session changes
+  useEffect(() => {
+    if (!activeSessionId) { setActiveSessionInfo(null); return; }
+    fetch(`/api/v1/sessions/${activeSessionId}`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setActiveSessionInfo(data))
+      .catch(() => {});
+  }, [activeSessionId]);
+
   const currentSession = activeSessionId || '';
   const sessionSelected = Boolean(currentSession);
 
@@ -46,11 +57,15 @@ export default function RedTeamConsole({ activeSessionId, events, onRefreshEvent
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail?.message || data.detail || `HTTP ${res.status}`);
+      const targetLine = data.target_endpoint
+        ? `[+] Target Endpoint: ${data.target_endpoint}`
+        : '[+] Target Endpoint: (not resolved — session may be unbound)';
       setTerminalHistory(prev => [
         ...prev,
         `[+] Playbook submitted: ${data.scenario}`,
         `[+] Mode: ${data.execution_mode} | Steps: ${data.steps_executed} | Live: ${data.live_steps} | Simulated: ${data.simulated_steps} | Blocked: ${data.blocked_steps}`,
-        `[+] MITRE Technique: ${data.technique}`
+        `[+] MITRE Technique: ${data.technique}`,
+        targetLine
       ]);
       onRefreshEvents();
     } catch (err) {
@@ -105,7 +120,13 @@ export default function RedTeamConsole({ activeSessionId, events, onRefreshEvent
             </h3>
             {activeSessionId ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span className="badge badge-soc">Target: {activeSessionId}</span>
+                <span className="badge badge-soc">Session: {activeSessionId}</span>
+              {activeSessionInfo?.target_endpoint && (
+                <span className="badge badge-covered" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem' }}
+                  title="Resolved target endpoint for this session. Commands targeting {TARGET} resolve to this host.">
+                  {activeSessionInfo.target_endpoint}
+                </span>
+              )}
                 {onNavigateRole && (
                   <button
                     className="btn btn-secondary"

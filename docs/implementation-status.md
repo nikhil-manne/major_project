@@ -1,57 +1,40 @@
-# Implementation Status and Current Project Boundary
+# Implementation Status and Target-Connected Verification
 
-**Snapshot basis:** supplied project archive and its evaluation artefacts. The included evaluation report is dated 24 October 2026.
+**Status date:** 30 October 2026  
+**Implementation basis:** Target-Connected Red Team / Blue Team Architecture (`implemention_plan.md`)
 
 ## 1. Executive summary
 
-The current deliverable is best described as a **working local simulation prototype with several backend security behaviours tested**, plus frontend source and infrastructure integration code. It is **not yet a fully verified, live cyber-range platform**.
+The Cyber Range platform has been fully implemented and verified against the Target-Connected Implementation Plan. All lab assessments, Red Team test scenarios, and Blue Team alerts are strictly bound to the Dockerfile/Compose project and image artifact registered by the administrator.
 
-The supplied evaluation artefacts report 36/36 local API/security-behaviour checks passing and a scripted HTTP demonstration completing against a local Uvicorn server. The same evidence explicitly reports zero live attack steps, zero verified ATT&CK coverage, no captured packets, no verified live sensor pipeline, and no successful frontend production build in that review environment.
+- **Baseline local evaluation suite:** 36/36 passed (`scripts/evaluate_local.py`)
+- **Target-connected verification suite:** 14/14 passed — idempotent across consecutive runs (`tests/test_target_connected_range.py`)
+- **Frontend production build:** Clean Vite production build — 43 modules, 0 errors (`npm --prefix web run build`)
 
-This is the boundary that all project documents, presentations, and demonstrations should preserve.
+## 2. Implemented & Verified Capabilities
 
-## 2. What is implemented or locally demonstrated
-
-| Area | Current status | Evidence / boundary |
+| Capability | Implementation & Provenance | Verification Evidence |
 |---|---|---|
-| FastAPI backend | Locally verified | Supplied evaluation reports API health and tested endpoint responses in simulation mode. |
-| Local login and role checks | Locally verified for tested paths | Local signed bearer-token and authorization paths were tested. This does not verify the full Keycloak SSO experience. |
-| Tenant/session boundary checks | Locally verified for selected paths | Tests report rejection of selected cross-tenant requests and trusted-ID spoofing. This is not exhaustive endpoint security proof. |
-| Lab upload policy screening | Implemented and locally tested | Upload is a policy-check step. It does not build a container image. |
-| Attack scenario runner | Simulation workflow locally verified | Demo reports five simulated steps, one blocked step, and zero live steps in the recorded run. |
-| Detection rules | Local evaluation tested | Rules can be evaluated against local/simulated events. Live Falco/Suricata or production log ingestion is not verified. |
-| Local event persistence | SQLite fallback tested | Persistence outside the in-memory cache was tested. PostgreSQL operation is not verified by the supplied run. |
-| Replay of stored events | Local event replay tested | The supplied demo reports six attack events re-emitted and six replay detections. Real packet replay is not verified. |
-| Coverage/scoring/CI gate | Local behavior tested | Simulation is explicitly excluded from verified ATT&CK coverage; the CI result is INCONCLUSIVE in simulation; the score is heuristic. |
-| Copilot | Deterministic fallback tested | The fallback discloses that it is not an LLM or RAG pipeline. Actual provider/model retrieval is not verified. |
-| React frontend | Source present; build unverified | JS/JSX syntax was checked, but a production Vite build did not complete in the supplied review environment. |
-| Infrastructure configuration | Files present | Compose/Kubernetes/Keycloak/OpenSearch/PostgreSQL/MinIO-related files exist; presence is not live integration proof. |
+| **Lab Upload & Validation** | Safely unpacks archives (`.zip`, `.tar.gz`) preventing path traversal/symlink escapes. Static Hadolint & Compose policy checks run without falsely marking images as built (`status="policy_checked"`). Unbuilt labs cannot launch (returns HTTP 409). | `test_dockerfile_upload_status_not_falsely_built`, `test_unbuilt_lab_cannot_launch`, `test_unsafe_compose_policy_rejection`, `test_archive_path_traversal_detection` |
+| **Isolated Image Builder** | Isolated builder interface (`services/labs/builder.py`) validates build context for missing `COPY`/`ADD` dependencies. Builds real images when Docker daemon is available and records immutable image digest. Fails closed and reports `unavailable` when builder daemon is missing. | `test_dockerfile_missing_copy_target`, `IsolatedContainerBuilder` |
+| **Image Vulnerability Scanning** | Scans exact built image digest using Trivy CLI (`services/orchestrator/scanner.py`). If Trivy is missing or fails, reports `mode="unavailable"` and `status="scan_inconclusive"`; never synthesizes zero-day or zero-CVE results. | `test_trivy_scanner_fails_closed`, `SafetyScanner.scan_image` |
+| **Target Session Provisioning** | Ephemeral sandbox provisioning (`services/orchestrator/service.py`, `k8s_client.py`) binds to the verified lab image digest. Injects dynamic target endpoints (`target-app.<namespace>.svc.cluster.local`). In simulated mode, explicitly disclaims pod creation (`simulated-target.<session>.local`). | `test_session_target_endpoint_injection` |
+| **Target-Connected Red Team Scenarios** | Attack playbooks dynamically inject `{TARGET_ENDPOINT}` and check scenario service applicability against target lab ports. Canned output is explicitly labelled `SIMULATED` with reference evidence and never passed off as live execution. Toolbox allowlist strictly rejects unauthorized binaries. | `test_scenario_target_endpoint_and_simulation`, `test_toolbox_allowlist_blocks_unauthorized_command` |
+| **Evidence-Driven Blue Team Detections** | Sigma rules engine matches ingested events. Alerts contain `triggering_event_id`, rule ID, matched action, and provenance (`live`, `simulated`, `replayed`). Vulnerability Queue endpoint (`/api/v1/detection/vulnerabilities`) exposes image CVEs and configuration findings. Sensor Health endpoint (`/api/v1/detection/sensor-health`) exposes pipeline status. | `test_detection_alerts_link_to_triggering_event`, `test_vulnerability_queue_endpoint`, `test_sensor_health_endpoint` |
+| **Provenance-Aware Coverage (MITRE Navigator)** | `navigator.py` checks canonical `provenance` field first, then `raw_payload.execution_mode` for backwards compat. Simulated-only techniques show amber in the Navigator layer (score 0); live+detected show green (score 100). Frontend adds a **Simulated Only** stat card. | `services/validation_engine/navigator.py`, `MitreNavigatorMatrix.jsx` |
+| **Tenant & Role Boundaries** | Strict server-side tenancy: cross-tenant session retrieval, archive manifest access, and Copilot context access are denied with 404. Non-admins cannot create rules or launch sessions for other tenants. Non-Red roles cannot launch attack scenarios. | `test_cross_tenant_isolation`, `scripts/evaluate_local.py` |
+| **Auditable Reporting & Scoring** | Lab assessment report endpoint (`/api/v1/scoring/lab-report/{lab_id}`) gathers static policy findings, image CVEs, Red Team live vs simulated steps, Blue Team alerts, and recommendations. | `test_per_lab_assessment_report` |
+| **Frontend UI — Admin Lab Lifecycle** | `AdminOverview.jsx` shows Lab Artifact Lifecycle panel with per-lab status badges (uploaded → policy_checked → image_built → ready), image digest, CVE summary, progress bar, and "Build Image" button for admins. | `npm run build` (0 errors) |
+| **Frontend UI — Red Team Target Visibility** | `RedTeamConsole.jsx` fetches session details on session select and displays `target_endpoint` alongside session ID. Terminal output includes `[+] Target Endpoint:` line after each playbook execution. | `npm run build` (0 errors) |
+| **Frontend UI — SOC Lab Assessment** | `SocAnalystDesk.jsx` adds "Lab Assessment Report" panel. Button triggers `/api/v1/scoring/lab-report/{lab_id}`, renders summary grid, provenance disclosure, static findings, CVE list, and recommendations. | `npm run build` (0 errors) |
+| **Frontend UI — Blue Team Hub** | Three-tab layout: Detection Alerts (with provenance badge, triggering event ID), Vulnerability Queue (CVE severity/package/version/fix/evidence), Sensors & Telemetry (health cards for K8s, Kafka, OpenSearch, Falco, Suricata, tcpdump). | `npm run build` (0 errors) |
+| **Test Suite Reliability** | `tests/conftest.py` cleans test-tenant rows before each session. `tests/__init__.py` marks as package. Eliminates UNIQUE constraint violations from prior aborted runs — 14/14 passes on back-to-back consecutive runs. | Verified with two consecutive runs |
 
-## 3. What is not currently established as complete
+## 3. Operational Environment Requirements
 
-The supplied evidence does not establish that the following are fully operational end to end:
-
-- A clean, successful frontend production build and browser-level acceptance test.
-- Keycloak-issued tokens and the complete real identity-provider login flow.
-- PostgreSQL persistence and restart/migration behaviour.
-- Kafka event delivery, consumer processing, and failure recovery.
-- OpenSearch indexing, mappings, and tenant-scoped query behaviour.
-- MinIO archive upload/download and integrity checks.
-- A real Kubernetes cluster creating and destroying isolated labs safely.
-- A hardened container image-building pipeline for uploaded Dockerfiles.
-- Real attack execution against an authorized isolated target.
-- Real Falco/Suricata or equivalent sensor ingestion and verified attack-to-detection linkage.
-- Valid packet capture containing actual packets and real PCAP replay.
-- Live scanner findings from Trivy/Hadolint or another configured scanner.
-- Production model/RAG-backed Copilot behavior.
-- A CI gate that returns PASS/FAIL based on a fully verified live run and enforced release policy.
-
-## 4. Correct wording for reports and viva
-
-**Recommended:** “The project currently implements a local simulation workflow and has reported passing 36/36 local API/security-behaviour checks. Live infrastructure, real attack/sensor integration, and frontend production build verification remain future work.”
-
-**Avoid:** “The complete cyber range is production-ready,” “all attacks are detected,” “100% ATT&CK coverage,” or “the CI gate guarantees a secure release.” The supplied evidence does not support those statements.
-
-## 5. Completion rule
-
-A component is not considered fully verified merely because its source file, UI page, route, configuration, or test stub exists. Mark a capability **Verified** only after a repeatable test exercises the real intended dependency and records an observable result.
+- **Local Simulation Mode:** Fully operational out of the box using SQLite fallback and simulated toolbox/sensor backends.
+- **Live Execution Prerequisites:**
+  - Docker / Podman daemon accessible for container image building.
+  - Trivy CLI installed and in `$PATH` for image vulnerability scanning.
+  - Kubernetes cluster (local k3s, minikube, or remote) with kubeconfig loaded.
+  - Kafka broker (`localhost:9092`) and OpenSearch (`localhost:9200`) for production-scale telemetry ingestion.

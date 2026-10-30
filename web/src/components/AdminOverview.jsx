@@ -7,27 +7,55 @@ export default function AdminOverview({ onRefreshEvents }) {
   const [scanResult, setScanResult] = useState(null);
   const [scanning, setScanning] = useState(false);
 
+  const [labs, setLabs] = useState([]);
+  const [buildingLabId, setBuildingLabId] = useState(null);
+
+  const fetchLabs = () => {
+    fetch('/api/v1/labs')
+      .then(res => res.json())
+      .then(data => setLabs(Array.isArray(data) ? data : (data?.labs || [])))
+      .catch(() => setLabs([]));
+  };
+
+  const handleBuildLab = async (labId) => {
+    if (!labId) return;
+    setBuildingLabId(labId);
+    try {
+      const res = await fetch(`/api/v1/labs/${labId}/build`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail?.message || data.detail || `HTTP ${res.status}`);
+      fetchLabs();
+    } catch (err) {
+      console.error('Build failed:', err.message);
+    } finally {
+      setBuildingLabId(null);
+    }
+  };
+
   const fetchSessionsAndHealth = () => {
     fetch('/api/v1/sessions')
       .then(res => res.json())
-      .then(data => setSessions(data))
-      .catch(() => {});
+      .then(data => setSessions(Array.isArray(data) ? data : []))
+      .catch(() => setSessions([]));
 
     fetch('/api/v1/system/health')
       .then(res => res.json())
-      .then(data => setSystemHealth(data))
+      .then(data => setSystemHealth(data && typeof data === 'object' ? data : null))
       .catch(() => {});
   };
 
   useEffect(() => {
     fetchSessionsAndHealth();
+    fetchLabs();
   }, []);
 
   const handleDestroySession = async (sessionId) => {
     try {
       await fetch(`/api/v1/sessions/${sessionId}`, { method: 'DELETE' });
       fetchSessionsAndHealth();
-      onRefreshEvents();
+      if (typeof onRefreshEvents === 'function') {
+        onRefreshEvents();
+      }
     } catch (err) {
       console.error(err);
     }
@@ -80,11 +108,11 @@ export default function AdminOverview({ onRefreshEvents }) {
         <div className="glass-panel" style={{ padding: '20px', flex: 1 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
             <h3 style={{ fontSize: '1.05rem' }}>Active & Ephemeral Sandboxes</h3>
-            <span className="badge badge-untested">{sessions.length} Sessions</span>
+            <span className="badge badge-untested">{(Array.isArray(sessions) ? sessions.length : 0)} Sessions</span>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '420px', overflowY: 'auto' }}>
-            {sessions.length === 0 ? (
+            {!Array.isArray(sessions) || sessions.length === 0 ? (
               <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-dim)' }}>
                 No active sandboxes. Create one from Red Team or trigger a CI gate.
               </div>
@@ -188,12 +216,100 @@ export default function AdminOverview({ onRefreshEvents }) {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto' }}>
-              {scanResult.findings.map((f, i) => (
+              {(scanResult.findings || []).map((f, i) => (
                 <div key={i} style={{ fontSize: '0.78rem', color: '#fca5a5' }}>
                   <strong>[Line {f.line}] {f.rule} ({f.severity}):</strong> {f.message}
                 </div>
               ))}
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* Lab Lifecycle Status Panel (Spans full width across grid) */}
+      <div className="glass-panel" style={{ padding: '20px', gridColumn: '1 / -1' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+          <h3 style={{ color: '#a78bfa', fontSize: '1.05rem' }}>Lab Artifact Lifecycle</h3>
+          <button className="btn btn-outline" style={{ fontSize: '0.78rem', padding: '4px 10px' }} onClick={fetchLabs}>Refresh</button>
+        </div>
+        {!Array.isArray(labs) || labs.length === 0 ? (
+          <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)', fontSize: '0.85rem' }}>
+            No labs uploaded yet. Upload a Dockerfile or archive from Common Labs.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '360px', overflowY: 'auto' }}>
+            {labs.map(lab => {
+              const labId = lab.id || lab.lab_id;
+              const statusColorMap = {
+                uploaded: '#94a3b8', policy_checked: '#38bdf8', building: '#f59e0b',
+                image_built: '#a78bfa', ready: '#34d399', policy_failed: '#ef4444', build_failed: '#ef4444'
+              };
+              const stColor = statusColorMap[lab.status] || '#94a3b8';
+              const isBuildable = lab.status === 'policy_checked' && !lab.image_digest;
+              const isBuilding = buildingLabId === labId;
+              const scanSummary = lab.vulnerability_scan_result?.summary;
+
+              return (
+                <div key={labId} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: '12px 16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '8px' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: '0.88rem' }}>{labId}</span>
+                        <span className="badge" style={{ color: stColor, borderColor: stColor, background: 'transparent', fontSize: '0.7rem' }}>{lab.status?.toUpperCase()}</span>
+                        {lab.build_status && lab.build_status !== lab.status && (
+                          <span className="badge badge-untested" style={{ fontSize: '0.68rem' }}>build: {lab.build_status}</span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{lab.name}</div>
+                      {lab.image_digest && typeof lab.image_digest === 'string' && (
+                        <div style={{ fontSize: '0.72rem', fontFamily: 'var(--font-mono)', color: '#a78bfa', marginTop: '3px' }}
+                          title={lab.image_digest}>
+                          digest: {lab.image_digest.slice(0, 24)}…
+                        </div>
+                      )}
+                      {scanSummary && (
+                        <div style={{ fontSize: '0.72rem', color: '#f59e0b', marginTop: '3px' }}>
+                          {typeof scanSummary === 'object' ? (
+                            <span>
+                              Scan: {scanSummary.critical ?? 0} Crit / {scanSummary.high ?? 0} High ({lab.vulnerability_scan_result?.total_findings ?? 0} total)
+                            </span>
+                          ) : (
+                            <span>Scan: {String(scanSummary)}</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    {isBuildable && (
+                      <button
+                        className="btn btn-primary"
+                        style={{ fontSize: '0.75rem', padding: '5px 10px' }}
+                        onClick={() => handleBuildLab(labId)}
+                        disabled={isBuilding}
+                      >
+                        {isBuilding ? 'Building...' : 'Build Image'}
+                      </button>
+                    )}
+                  </div>
+                  {/* Stage progress bar */}
+                  <div style={{ display: 'flex', gap: '4px', marginTop: '10px' }}>
+                    {['uploaded', 'policy_checked', 'image_built', 'ready'].map(stage => {
+                      const stageOrder = ['uploaded', 'policy_checked', 'image_built', 'ready'];
+                      const currentIdx = stageOrder.indexOf(lab.status);
+                      const stageIdx = stageOrder.indexOf(stage);
+                      const done = currentIdx >= stageIdx;
+                      const failed = (lab.status === 'policy_failed' && stage === 'policy_checked') ||
+                                     (lab.status === 'build_failed' && stage === 'image_built');
+                      return (
+                        <div key={stage} style={{
+                          flex: 1, height: '4px', borderRadius: '2px',
+                          background: failed ? '#ef4444' : done ? stColor : 'rgba(255,255,255,0.08)'
+                        }} title={stage} />
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

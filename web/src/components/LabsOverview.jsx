@@ -10,6 +10,7 @@ export default function LabsOverview({ user, activeSessionId, onSelectSession, o
   const [labDescription, setLabDescription] = useState('');
   const [expandedLabId, setExpandedLabId] = useState(null);
   const [launchingLabId, setLaunchingLabId] = useState(null);
+  const [buildingLabId, setBuildingLabId] = useState(null);
   const [destroyingSessionId, setDestroyingSessionId] = useState(null);
   const [notification, setNotification] = useState(null);
 
@@ -18,6 +19,35 @@ export default function LabsOverview({ user, activeSessionId, onSelectSession, o
   const showNotice = (msg, type = 'info') => {
     setNotification({ msg, type });
     setTimeout(() => setNotification(null), 6000);
+  };
+
+  const handleBuildLab = async (labId, e) => {
+    if (e) e.stopPropagation();
+    if (!isAdmin) {
+      showNotice("Only Administrators can trigger image builds.", "error");
+      return;
+    }
+    setBuildingLabId(labId);
+    showNotice(`Triggering container image build for lab '${labId}'...`, "info");
+    try {
+      const res = await fetch(`/api/v1/labs/${labId}/build`, {
+        method: "POST"
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail?.message || data.detail || "Build request failed");
+      }
+      if (data.status === 'image_built' || data.status === 'ready') {
+        showNotice(`Lab '${data.name}' built successfully! Digest: ${data.image_digest?.slice(0, 19)}...`, "success");
+      } else {
+        showNotice(`Build outcome: ${data.status} · ${data.build_logs?.slice(0, 100) || ''}`, "warning");
+      }
+      fetchLabs();
+    } catch (err) {
+      showNotice(`Build error: ${err.message}`, "error");
+    } finally {
+      setBuildingLabId(null);
+    }
   };
 
   const fetchLabs = () => {
@@ -349,7 +379,7 @@ export default function LabsOverview({ user, activeSessionId, onSelectSession, o
               <input
                 id="lab-file-input"
                 type="file"
-                accept=".dockerfile,Dockerfile,.yaml,.yml"
+                accept=".dockerfile,Dockerfile,.yaml,.yml,.zip,.tar,.gz,.tar.gz,.tgz"
                 style={{ display: 'none' }}
                 onChange={handleFileChange}
               />
@@ -360,16 +390,16 @@ export default function LabsOverview({ user, activeSessionId, onSelectSession, o
                     {selectedFile.name} ({(selectedFile.size / 1024).toFixed(1)} KB)
                   </span>
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '8px' }}>
-                    Click or drag another file to replace
+                    Click or drag another file or archive to replace
                   </p>
                 </div>
               ) : (
                 <div>
                   <p style={{ fontWeight: 600, fontSize: '1rem', color: 'var(--text-main)' }}>
-                    Drag & Drop <span style={{ color: '#06b6d4' }}>Dockerfile</span> or <span style={{ color: '#38bdf8' }}>docker-compose.yml</span>
+                    Drag & Drop <span style={{ color: '#06b6d4' }}>Dockerfile</span>, <span style={{ color: '#38bdf8' }}>docker-compose.yml</span>, or <span style={{ color: '#a855f7' }}>Context Archive (.zip / .tar.gz)</span>
                   </p>
                   <p style={{ fontSize: '0.82rem', color: 'var(--text-dim)', marginTop: '4px' }}>
-                    or click to browse from your computer (max 10MB)
+                    or click to browse from your computer (safe traversal checked, max 25MB)
                   </p>
                 </div>
               )}
@@ -519,15 +549,29 @@ export default function LabsOverview({ user, activeSessionId, onSelectSession, o
                     {/* Metadata Box */}
                     <div style={{ background: 'rgba(0, 0, 0, 0.3)', padding: '10px 14px', borderRadius: 'var(--radius-sm)', marginBottom: '16px', fontSize: '0.8rem' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                        <span style={{ color: 'var(--text-dim)' }}>Container Image:</span>
-                        <code style={{ color: '#38bdf8', fontSize: '0.78rem' }}>{lab.image_tag || "vulhub/struts2-core:2.3.31"}</code>
+                        <span style={{ color: 'var(--text-dim)' }}>Content Hash:</span>
+                        <code style={{ color: '#94a3b8', fontSize: '0.78rem' }}>{lab.content_hash ? lab.content_hash.slice(0, 12) : (lab.id || 'N/A')}</code>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                        <span style={{ color: 'var(--text-dim)' }}>Image Digest:</span>
+                        <code style={{ color: lab.image_digest ? '#10b981' : '#f59e0b', fontSize: '0.78rem' }}>
+                          {lab.image_digest ? `${lab.image_digest.slice(0, 18)}...` : (lab.image_tag || 'Not Built Yet')}
+                        </code>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                         <span style={{ color: 'var(--text-dim)' }}>Policy Gate:</span>
-                        <span style={{ color: scanPassed ? '#10b981' : '#f59e0b', fontWeight: 600 }}>
-                          {scanPassed ? 'PASSED · READY' : 'PASSED (DEFAULT)'}
+                        <span style={{ color: scanPassed ? '#10b981' : '#ef4444', fontWeight: 600 }}>
+                          {scanPassed ? 'PASSED · SCREENED' : 'POLICY BLOCKED'}
                         </span>
                       </div>
+                      {lab.vulnerability_scan_result?.summary && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                          <span style={{ color: 'var(--text-dim)' }}>Trivy CVEs:</span>
+                          <span style={{ color: lab.vulnerability_scan_result.summary.critical > 0 ? '#ef4444' : '#10b981', fontWeight: 600 }}>
+                            {lab.vulnerability_scan_result.summary.critical} Crit / {lab.vulnerability_scan_result.summary.high} High ({lab.vulnerability_scan_result.total_findings || 0} total)
+                          </span>
+                        </div>
+                      )}
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ color: 'var(--text-dim)' }}>Running Sandboxes:</span>
                         <span style={{ color: activeCount > 0 ? '#10b981' : 'var(--text-muted)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -672,16 +716,29 @@ export default function LabsOverview({ user, activeSessionId, onSelectSession, o
                   </div>
 
                   {/* Actions Bar */}
-                  <div style={{ display: 'flex', gap: '8px', marginTop: '12px', borderTop: '1px solid var(--border-subtle)', paddingTop: '14px' }}>
-                    {/* Launch Sandbox Instance - Allowed for all authenticated users */}
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '12px', borderTop: '1px solid var(--border-subtle)', paddingTop: '14px', flexWrap: 'wrap' }}>
+                    {/* Build Image Artifact Button - for Admins when not yet built */}
+                    {isAdmin && (!lab.image_digest || lab.build_status !== 'built') && (
+                      <button
+                        className="btn btn-secondary"
+                        style={{ fontSize: '0.84rem', padding: '8px 12px', color: '#38bdf8', borderColor: 'rgba(56, 189, 248, 0.4)' }}
+                        onClick={(e) => handleBuildLab(lab.id, e)}
+                        disabled={buildingLabId === lab.id || lab.status === 'failed'}
+                        title="Build a real container image from this lab's Dockerfile & context"
+                      >
+                        {buildingLabId === lab.id ? "Building Image..." : "Build Image"}
+                      </button>
+                    )}
+
+                    {/* Launch Sandbox Instance */}
                     <button
                       className="btn btn-primary"
                       style={{ flex: 1, fontSize: '0.84rem', padding: '8px 12px' }}
                       onClick={() => handleLaunchSession(lab.id, lab.name)}
-                      disabled={launchingLabId === lab.id || lab.status === 'failed'}
-                      title="Launch a new isolated sandbox of this common lab. You can spawn multiple sandboxes."
+                      disabled={launchingLabId === lab.id || lab.status === 'failed' || (!lab.image_digest && !lab.image_tag)}
+                      title={(!lab.image_digest && !lab.image_tag) ? "Build the image artifact first before launching" : "Launch a new isolated sandbox"}
                     >
-                      {launchingLabId === lab.id ? "Spawning Sandbox..." : "Launch Sandbox Instance"}
+                      {launchingLabId === lab.id ? "Spawning Sandbox..." : (!lab.image_digest && !lab.image_tag) ? "Build Required To Launch" : "Launch Sandbox"}
                     </button>
 
                     {/* Manage Sandboxes Drawer Toggle */}

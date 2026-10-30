@@ -7,6 +7,9 @@ export default function SocAnalystDesk({ activeSessionId, onNavigateRole }) {
   const [huntResults, setHuntResults] = useState(null);
   const [hunting, setHunting] = useState(false);
   const [selectedIncident, setSelectedIncident] = useState(null);
+  const [labReport, setLabReport] = useState(null);
+  const [labReportLoading, setLabReportLoading] = useState(false);
+  const [labReportError, setLabReportError] = useState(null);
 
   const fetchScoreAndIncidents = () => {
     fetch(`/api/v1/scoring/score?session_id=${activeSessionId || ''}`)
@@ -18,6 +21,22 @@ export default function SocAnalystDesk({ activeSessionId, onNavigateRole }) {
       .then(res => res.json())
       .then(data => setIncidents(data))
       .catch(() => {});
+  };
+
+  const fetchLabReport = async (labId) => {
+    if (!labId) return;
+    setLabReportLoading(true);
+    setLabReportError(null);
+    try {
+      const res = await fetch(`/api/v1/scoring/lab-report/${encodeURIComponent(labId)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setLabReport(data);
+    } catch (err) {
+      setLabReportError(err.message);
+    } finally {
+      setLabReportLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -280,6 +299,117 @@ export default function SocAnalystDesk({ activeSessionId, onNavigateRole }) {
             ))
           )}
         </div>
+      </div>
+
+      {/* Lab Assessment Report */}
+      <div className="glass-panel" style={{ padding: '20px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1.05rem' }}>
+            Lab Assessment Report
+          </h3>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            {labReport && (
+              <span className="badge badge-soc" style={{ fontSize: '0.75rem' }}>Lab: {labReport.lab_id}</span>
+            )}
+            <button
+              id="btn-fetch-lab-report"
+              className="btn btn-outline"
+              style={{ fontSize: '0.8rem', padding: '5px 12px' }}
+              onClick={() => {
+                // Try to derive lab_id from the active session info, or prompt user
+                const labId = labReport?.lab_id || window.prompt('Enter lab ID (e.g. lab-abc123):');
+                if (labId) fetchLabReport(labId);
+              }}
+              disabled={labReportLoading}
+            >
+              {labReportLoading ? 'Loading...' : labReport ? 'Refresh Report' : 'Load Lab Report'}
+            </button>
+          </div>
+        </div>
+
+        {labReportError && (
+          <div style={{ color: '#f87171', fontSize: '0.82rem', marginBottom: '12px' }}>
+            Error: {labReportError}
+          </div>
+        )}
+
+        {!labReport && !labReportLoading && (
+          <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-dim)', fontSize: '0.85rem' }}>
+            Click 'Load Lab Report' to fetch the full per-lab assessment: static findings, CVEs, red/blue team event summary, and recommendations.
+          </div>
+        )}
+
+        {labReport && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {/* Summary strip */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px' }}>
+              {[
+                { label: 'Static Findings', value: labReport.summary?.static_findings_count ?? 0, color: '#f59e0b' },
+                { label: 'CVEs', value: labReport.summary?.cve_count ?? 0, color: '#ef4444' },
+                { label: 'Critical CVEs', value: labReport.summary?.critical_cve_count ?? 0, color: '#dc2626' },
+                { label: 'Attack Events', value: labReport.summary?.attack_events ?? 0, color: '#f87171' },
+                { label: 'Detection Events', value: labReport.summary?.detection_events ?? 0, color: '#34d399' },
+                { label: 'Readiness Score', value: labReport.summary?.readiness_score ?? 'N/A', color: '#38bdf8' },
+              ].map(({ label, value, color }) => (
+                <div key={label} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: '10px 14px' }}>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>{label}</div>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color }}>{value}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Provenance disclosure */}
+            {labReport.provenance_disclosure && (
+              <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', fontSize: '0.8rem', color: '#fbbf24' }}>
+                <strong>Provenance:</strong> {labReport.provenance_disclosure}
+              </div>
+            )}
+
+            {/* Static policy findings */}
+            {labReport.static_findings?.length > 0 && (
+              <div>
+                <h4 style={{ fontSize: '0.9rem', color: '#f59e0b', marginBottom: '8px' }}>Static Policy Findings ({labReport.static_findings.length})</h4>
+                <div style={{ maxHeight: '150px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  {labReport.static_findings.map((f, i) => (
+                    <div key={i} style={{ fontSize: '0.78rem', fontFamily: 'var(--font-mono)', background: 'rgba(255,255,255,0.02)', padding: '6px 10px', borderRadius: '4px' }}>
+                      <span style={{ color: f.severity === 'CRITICAL' || f.severity === 'HIGH' ? '#f87171' : '#fbbf24' }}>[{f.severity}]</span>{' '}
+                      {f.rule}: {f.message}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* CVE list */}
+            {labReport.cves?.length > 0 && (
+              <div>
+                <h4 style={{ fontSize: '0.9rem', color: '#ef4444', marginBottom: '8px' }}>Image CVEs ({labReport.cves.length})</h4>
+                <div style={{ maxHeight: '150px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  {labReport.cves.map((c, i) => (
+                    <div key={i} style={{ fontSize: '0.78rem', fontFamily: 'var(--font-mono)', background: 'rgba(239,68,68,0.04)', padding: '6px 10px', borderRadius: '4px', display: 'flex', gap: '12px' }}>
+                      <span style={{ color: c.severity === 'CRITICAL' ? '#dc2626' : c.severity === 'HIGH' ? '#f87171' : '#fbbf24', fontWeight: 700 }}>{c.severity}</span>
+                      <span style={{ color: '#38bdf8' }}>{c.cve_id}</span>
+                      <span style={{ color: 'var(--text-muted)' }}>{c.package} {c.version}</span>
+                      {c.fixed_version && <span style={{ color: '#34d399' }}>→ {c.fixed_version}</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Recommendations */}
+            {labReport.recommendations?.length > 0 && (
+              <div>
+                <h4 style={{ fontSize: '0.9rem', color: '#38bdf8', marginBottom: '8px' }}>Recommendations</h4>
+                <ul style={{ paddingLeft: '18px', margin: 0, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  {labReport.recommendations.map((r, i) => (
+                    <li key={i} style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>{r}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

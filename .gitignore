@@ -25,6 +25,14 @@ captures/
 *.pcapng
 *.cast
 
+# Test-generated databases (committed test files are fine; generated DBs are not)
+tests/*.db
+tests/*.sqlite
+tests/*.sqlite3
+
+# Lab build contexts (generated per-upload; not source artefacts)
+logs/build_contexts/
+
 # Frontend dependencies/build output
 web/node_modules/
 web/dist/

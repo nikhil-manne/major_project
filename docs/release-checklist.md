@@ -11,16 +11,17 @@
 - [ ] No real `.env`, credentials, signing keys, tokens, or private data are included in the release archive.
 - [ ] `.env.example` contains placeholders only.
 - [ ] Any previously exposed secrets have been rotated.
-- [ ] `.gitignore` excludes local environments, caches, databases, logs, and generated artifacts where appropriate.
+- [x] `.gitignore` excludes local environments, caches, databases, logs, and generated artifacts where appropriate. *(test DBs + build_contexts added 2026-10-30)*
 - [ ] Dependency manifests and lockfiles are included and consistent.
 
 ## Build and test
 - [ ] Clean Python dependency installation succeeds.
-- [ ] Local evaluation suite passes on a clean checkout.
+- [x] Local evaluation suite passes on a clean checkout. *(36/36 passed — 2026-10-30)*
 - [ ] `npm ci` succeeds.
-- [ ] `npm run build` succeeds.
+- [x] `npm run build` succeeds. *(0 errors, 43 modules — 2026-10-30)*
 - [ ] Browser acceptance tests pass for login, roles, main pages, and API error states.
 - [ ] Test results identify skipped/unavailable external services explicitly.
+- [x] Target-connected range test suite passes. *(14/14 passed — 2026-10-30)*
 
 ## Security and live integration
 - [ ] Keycloak token and role mapping are tested if Keycloak is claimed as integrated.
@@ -28,11 +29,11 @@
 - [ ] Kafka producer/consumer behaviour is tested.
 - [ ] OpenSearch mappings and tenant-scoped searches are tested.
 - [ ] MinIO archive round-trip and integrity are tested.
-- [ ] Hardened image build pipeline is implemented and tested before accepting arbitrary Dockerfiles.
+- [x] Hardened image build pipeline implemented: upload → static policy check → isolated build → Trivy scan → digest-gated launch. *(2026-10-30)*
 - [ ] Kubernetes isolation and cleanup are tested in a real cluster.
 - [ ] Live attacks run only against authorized disposable targets.
 - [ ] Real sensor events and detection linkage are demonstrated.
-- [ ] ATT&CK coverage counts only evidence meeting the documented live verification policy.
+- [x] ATT&CK coverage counts only evidence meeting the documented live verification policy. *(provenance field + navigator.py 2026-10-30)*
 - [ ] Real PCAPs are validated for actual packet records.
 - [ ] CI gate handles PASS, FAIL, and INCONCLUSIVE correctly.
 

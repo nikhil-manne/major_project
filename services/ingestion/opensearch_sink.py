@@ -56,6 +56,7 @@ class EventSink:
                     existing.timestamp = event.timestamp
                     existing.source_type = event.source_type.value
                     existing.mitre_technique = event.mitre_technique
+                    existing.provenance = getattr(event, "provenance", "simulated")
                 else:
                     db.add(NormalizedEventModel(
                         event_id=event.event_id,
@@ -65,6 +66,7 @@ class EventSink:
                         timestamp=event.timestamp,
                         source_type=event.source_type.value,
                         mitre_technique=event.mitre_technique,
+                        provenance=getattr(event, "provenance", "simulated"),
                         event_payload=payload,
                     ))
                 db.commit()

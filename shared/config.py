@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     ATTACK_EXECUTION_MODE: str = "simulation"  # simulation or live
     ALLOW_SIMULATED_SANDBOX: bool = True
 
+    # Database Backend ('sqlite' or 'postgres')
+    DATABASE_BACKEND: str = os.getenv("DATABASE_BACKEND", "sqlite")
+
     # PostgreSQL
     POSTGRES_USER: str = os.getenv("POSTGRES_USER", "cyberrange")
     POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "dev_only_change_me")
@@ -59,11 +62,15 @@ class Settings(BaseSettings):
     KEYCLOAK_REALM: str = "cyberrange"
     KEYCLOAK_CLIENT_ID: str = "cyberrange-web"
 
-    # AI Copilot
+    # AI Security Copilot (Google Gemini & multi-provider)
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "gemini")
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "dev_placeholder_or_local_mock")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+
+    # Optional legacy Anthropic configuration
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "dev_placeholder")
     ANTHROPIC_MODEL: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
     ANTHROPIC_API_VERSION: str = os.getenv("ANTHROPIC_API_VERSION", "2026-10-21")
-    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "anthropic_with_local_demo_fallback")
 
 
     @property

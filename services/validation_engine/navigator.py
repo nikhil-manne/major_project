@@ -50,10 +50,16 @@ class ValidationEngine:
             evidence = []
 
             # Simulation records can exercise UI/rule wiring, but must not count as observed coverage.
+            # Check the canonical `provenance` field first (set by attack runner / terminal executor),
+            # then fall back to the legacy raw_payload flags for backwards compatibility.
             live_attacks = [
                 atk for atk in t_attacks
-                if atk.raw_payload.get("execution_mode") == "live"
-                or ("execution_mode" not in atk.raw_payload and atk.raw_payload.get("executed_live") is True)
+                if getattr(atk, "provenance", None) == "live"
+                or atk.raw_payload.get("execution_mode") == "live"
+                or (
+                    "execution_mode" not in atk.raw_payload
+                    and atk.raw_payload.get("executed_live") is True
+                )
             ]
             simulated_attacks = [atk for atk in t_attacks if atk not in live_attacks]
 
@@ -136,11 +142,14 @@ class ValidationEngine:
             color = "#64748b"  # Untested slate
             score = 0
             if item["status"] == "covered":
-                color = "#10b981"  # Emerald green
+                color = "#10b981"  # Emerald green — live attack + linked detection
                 score = 100
             elif item["status"] == "gap":
-                color = "#ef4444"  # Crimson red gap
+                color = "#ef4444"  # Crimson red — live attack, no detection
                 score = 10
+            elif item["status"] == "simulated":
+                color = "#f59e0b"  # Amber — simulated-only, not observed on target
+                score = 0
 
             techniques_list.append({
                 "techniqueID": item["technique_id"],

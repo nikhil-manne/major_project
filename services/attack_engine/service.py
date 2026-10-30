@@ -144,9 +144,10 @@ async def execute_terminal_command(
     eff_tenant = session_row.tenant_id
     eff_operator = user.username or req.operator
 
+    target_endpoint = getattr(session_row, "target_endpoint", None) or f"target-app.{session_row.namespace}.svc.cluster.local"
     # Commands are executed only through the toolbox client's allowlist. In simulation
     # mode the response explicitly says no command ran; no canned exploit success is emitted.
-    real_exec = k8s_client.exec_command_in_toolbox(req.session_id, cmd)
+    real_exec = k8s_client.exec_command_in_toolbox(req.session_id, cmd, target_endpoint=target_endpoint)
     output = real_exec.get("output", "")
 
     inferred_technique = req.mitre_technique or "T1059"
@@ -160,12 +161,15 @@ async def execute_terminal_command(
         inferred_technique, inferred_tactic = "T1190", "TA0001"
 
     execution_mode = real_exec.get("execution_mode", "simulated")
+    provenance = "live" if execution_mode == "live" else "simulated"
     if execution_mode == "simulated":
         outcome = Outcome.SIMULATED
     elif execution_mode == "blocked":
         outcome = Outcome.BLOCKED
+        provenance = "failed"
     elif execution_mode == "failed":
         outcome = Outcome.INCONCLUSIVE
+        provenance = "failed"
     else:
         # Output was returned, but the stream wrapper does not establish exploit success.
         outcome = Outcome.INCONCLUSIVE
@@ -183,9 +187,13 @@ async def execute_terminal_command(
         mitre_technique=inferred_technique,
         severity=Severity.HIGH,
         outcome=outcome,
+        provenance=provenance,
         raw_payload={
             "terminal_output": output,
             "cwd": "/workspace",
+            "target": target_endpoint,
+            "target_endpoint": target_endpoint,
+            "lab_id": session_row.lab_id,
             "executed_live": real_exec.get("executed_live", False),
             "execution_mode": execution_mode,
             "outcome_note": "Command execution is not proof that the intended attack succeeded."

@@ -40,6 +40,8 @@ class SessionInfo(BaseModel):
     lab_id: Optional[str] = None
     build_id: Optional[str] = None
     target_image: str
+    target_endpoint: Optional[str] = None
+    execution_mode: Optional[str] = "simulated"
     namespace: str
     status: str  # creating | active | destroyed
     created_at: datetime
@@ -57,6 +59,8 @@ def to_session_info(s: SessionModel) -> SessionInfo:
         lab_id=s.lab_id,
         build_id=s.build_id,
         target_image=s.target_image,
+        target_endpoint=getattr(s, "target_endpoint", None),
+        execution_mode=getattr(s, "execution_mode", "simulated"),
         namespace=s.namespace,
         status=s.status,
         created_at=s.created_at,
@@ -153,10 +157,22 @@ async def create_session(
     effective_tenant = req.tenant_id if (req.tenant_id and user.role == "admin") else user.tenant_id
     if req.skip_safety_gate and user.role != "admin":
         raise HTTPException(status_code=403, detail="Only an admin may override the safety gate")
+
+    target_image = req.target_image
     if req.lab_id:
         lab_row = db.query(Lab).filter_by(id=req.lab_id).first()
         if not lab_row or lab_row.status == "archived":
             raise HTTPException(status_code=404, detail="Lab not found or is archived")
+        if user.role != "admin" and lab_row.tenant_id != user.tenant_id and not getattr(lab_row, "is_demo", 0):
+            raise HTTPException(status_code=404, detail="Lab not found")
+        # Ensure only built labs with real image artifact can be launched
+        if lab_row.status in ("policy_checked", "uploaded", "failed", "building", "build_failed", "pending") or not lab_row.image_tag:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot launch session: Lab '{lab_row.name}' has status '{lab_row.status}' and has not been built into an image artifact."
+            )
+        # Use verified image artifact from the lab record
+        target_image = lab_row.image_digest or lab_row.image_tag
 
     session_id = f"sess-{uuid.uuid4().hex[:8]}"
     namespace = f"sandbox-{session_id}"
@@ -183,7 +199,7 @@ async def create_session(
                 }
             )
     else:
-        safety_scan = SafetyScanner.scan_image(req.target_image)
+        safety_scan = SafetyScanner.scan_image(target_image)
         if settings.ATTACK_EXECUTION_MODE.lower() == "live" and not safety_scan.get("verified", False) and not req.skip_safety_gate:
             raise HTTPException(status_code=503, detail={
                 "message": "Live session creation requires a successful real Trivy scan.",
@@ -194,7 +210,7 @@ async def create_session(
     k8s_result = k8s_client.create_sandbox(
         session_id=session_id,
         tenant_id=effective_tenant,
-        target_image=req.target_image
+        target_image=target_image
     )
     if k8s_result.get("execution_mode") == "failed":
         raise HTTPException(status_code=503, detail={
@@ -209,13 +225,19 @@ async def create_session(
     expires_at = now + timedelta(minutes=req.ttl_minutes)
 
     live_provisioned = bool(k8s_result.get("applied_to_cluster", False))
+    target_endpoint = k8s_result.get("target_endpoint") or (
+        f"target-app.{namespace}.svc.cluster.local" if live_provisioned else f"simulated-target.{session_id}.local"
+    )
+    execution_mode = "live" if live_provisioned else "simulated"
+
     isolation_spec = {
-        "execution_mode": "live" if live_provisioned else "simulated",
+        "execution_mode": execution_mode,
         "network_policy_enforced": live_provisioned,
         "pod_security_standard": "baseline" if live_provisioned else "not_enforced_simulation",
         "toolbox_allowed": live_provisioned,
         "rootless": False,
         "k8s_provisioned": live_provisioned,
+        "target_endpoint": target_endpoint,
         "resources": k8s_result.get("resources", []),
         "planned_resources": k8s_result.get("planned_resources", []),
         "provisioning_note": k8s_result.get("note") or k8s_result.get("error"),
@@ -227,7 +249,9 @@ async def create_session(
         tenant_id=effective_tenant,
         lab_id=req.lab_id,
         build_id=req.build_id,
-        target_image=req.target_image,
+        target_image=target_image,
+        target_endpoint=target_endpoint,
+        execution_mode=execution_mode,
         namespace=namespace,
         status="active",
         created_at=now,
@@ -250,9 +274,10 @@ async def create_session(
         source_type=SourceType.SOC_ACTION,
         source_name="orchestrator",
         actor=user.username,
-        action=f"Created sandbox session '{session_id}' in namespace '{namespace}' (target: {req.target_image})",
+        action=f"Created sandbox session '{session_id}' in namespace '{namespace}' (target: {target_image})",
         severity=Severity.LOW,
         outcome=Outcome.SUCCEEDED,
+        provenance=execution_mode,
         raw_payload={"isolation": isolation_spec, "ttl_minutes": req.ttl_minutes}
     )
     await event_sink.index_event(audit_event)
@@ -275,7 +300,7 @@ async def list_sessions(
         records = db.query(SessionModel).order_by(SessionModel.created_at.desc()).all()
     else:
         records = db.query(SessionModel).filter(
-            (SessionModel.tenant_id == eff_tenant) | (SessionModel.status == "active")
+            SessionModel.tenant_id == eff_tenant
         ).order_by(SessionModel.created_at.desc()).all()
     return [to_session_info(s) for s in records]
 
@@ -284,9 +309,11 @@ async def list_sessions(
 async def get_session(
     session_id: str, db: Session = Depends(get_db), user: UserContext = Depends(get_current_user)
 ):
-    """Retrieve metadata for a session."""
+    """Retrieve metadata for a session, strictly scoped by tenant."""
     session_row = db.query(SessionModel).filter_by(id=session_id).first()
     if not session_row:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    if user.role != "admin" and session_row.tenant_id != user.tenant_id:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
     return to_session_info(session_row)
 
@@ -300,6 +327,8 @@ async def destroy_session(
     """Destroy sandbox namespace, teardown pods, and trigger archival."""
     session_row = db.query(SessionModel).filter_by(id=session_id).first()
     if not session_row:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    if user.role != "admin" and session_row.tenant_id != user.tenant_id:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 
     # 1. Delete Kubernetes Namespace
@@ -323,7 +352,8 @@ async def destroy_session(
         actor=user.username,
         action=f"Destroyed sandbox session '{session_id}' and scheduled artifact archival",
         severity=Severity.LOW,
-        outcome=Outcome.SUCCEEDED
+        outcome=Outcome.SUCCEEDED,
+        provenance=getattr(session_row, "execution_mode", "simulated")
     )
     await event_sink.index_event(teardown_event)
 
